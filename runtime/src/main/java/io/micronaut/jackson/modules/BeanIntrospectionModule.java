@@ -43,6 +43,7 @@ import io.micronaut.core.beans.BeanIntrospector;
 import io.micronaut.core.beans.BeanProperty;
 import io.micronaut.core.type.Argument;
 import io.micronaut.core.util.CollectionUtils;
+import io.micronaut.core.util.StringUtils;
 import io.micronaut.http.hateoas.Resource;
 import io.micronaut.jackson.JacksonConfiguration;
 import org.slf4j.Logger;
@@ -63,7 +64,7 @@ import java.util.*;
 @Internal
 @Experimental
 @Singleton
-@Requires(property = JacksonConfiguration.PROPERTY_USE_BEAN_INTROSPECTION)
+@Requires(property = JacksonConfiguration.PROPERTY_USE_BEAN_INTROSPECTION, value = StringUtils.TRUE, defaultValue = StringUtils.TRUE)
 public class BeanIntrospectionModule extends SimpleModule {
 
     private static final Logger LOG = LoggerFactory.getLogger(BeanIntrospectionModule.class);
@@ -82,13 +83,14 @@ public class BeanIntrospectionModule extends SimpleModule {
 
     private PropertyMetadata newPropertyMetadata(Argument<?> argument, AnnotationMetadata annotationMetadata) {
         final Boolean required = argument.isAnnotationPresent(Nonnull.class) ||
-                annotationMetadata.getValue(JsonProperty.class, "required", Boolean.class).orElse(false);
+                annotationMetadata.booleanValue(JsonProperty.class, "required").orElse(false);
 
+        int index = annotationMetadata.intValue(JsonProperty.class, "index").orElse(-1);
         return PropertyMetadata.construct(
                 required,
-                annotationMetadata.getValue(JsonPropertyDescription.class, String.class).orElse(null),
-                annotationMetadata.getValue(JsonProperty.class, "index", Integer.class).orElse(null),
-                annotationMetadata.getValue(JsonProperty.class, "defaultValue", String.class).orElse(null)
+                annotationMetadata.stringValue(JsonPropertyDescription.class).orElse(null),
+                index > -1 ? index : null,
+                annotationMetadata.stringValue(JsonProperty.class, "defaultValue").orElse(null)
         );
     }
 
@@ -136,10 +138,10 @@ public class BeanIntrospectionModule extends SimpleModule {
                             } else if ("links".equals(n)) {
                                 propertyName = Resource.LINKS;
                             } else {
-                                propertyName = beanProperty.getValue(JsonProperty.class, String.class).orElse(beanProperty.getName());
+                                propertyName = beanProperty.stringValue(JsonProperty.class).orElse(beanProperty.getName());
                             }
                         } else {
-                            propertyName = beanProperty.getValue(JsonProperty.class, String.class).orElse(beanProperty.getName());
+                            propertyName = beanProperty.stringValue(JsonProperty.class).orElse(beanProperty.getName());
                         }
                         BeanPropertyWriter writer = new BeanIntrospectionPropertyWriter(
                                 propertyName,
@@ -153,13 +155,13 @@ public class BeanIntrospectionModule extends SimpleModule {
                     newBuilder.setProperties(newProperties);
                 } else {
                     if (LOG.isDebugEnabled()) {
-                        LOG.debug("Updating {} properties with BeanIntrospection data for type: ", properties.size(), beanClass);
+                        LOG.debug("Updating {} properties with BeanIntrospection data for type: {}", properties.size(), beanClass);
                     }
 
                     final List<BeanPropertyWriter> newProperties = new ArrayList<>(properties);
                     Map<String, BeanProperty> named = new LinkedHashMap<>(properties.size());
                     for (BeanProperty<Object, Object> beanProperty : beanProperties) {
-                        final Optional<String> n = beanProperty.getValue(JsonProperty.class, String.class);
+                        final Optional<String> n = beanProperty.stringValue(JsonProperty.class);
                         n.ifPresent(s -> named.put(s, beanProperty));
                     }
                     for (int i = 0; i < properties.size(); i++) {
@@ -251,11 +253,14 @@ public class BeanIntrospectionModule extends SimpleModule {
                                     introspection.getProperty(settableBeanProperty.getName());
 
                             if (beanProperty.isPresent()) {
-                                SettableBeanProperty newProperty = new BeanIntrospectionSetter(
-                                        methodProperty,
-                                        beanProperty.get()
-                                );
-                                builder.addOrReplaceProperty(newProperty, true);
+                                BeanProperty<Object, Object> bp = beanProperty.get();
+                                if (!bp.isReadOnly()) {
+                                    SettableBeanProperty newProperty = new BeanIntrospectionSetter(
+                                            methodProperty,
+                                            bp
+                                    );
+                                    builder.addOrReplaceProperty(newProperty, true);
+                                }
                             }
                         }
                     }
@@ -275,7 +280,7 @@ public class BeanIntrospectionModule extends SimpleModule {
                             final JavaType javaType = newType(argument, typeFactory);
                             final AnnotationMetadata annotationMetadata = argument.getAnnotationMetadata();
                             PropertyMetadata propertyMetadata = newPropertyMetadata(argument, annotationMetadata);
-                            final String simpleName = annotationMetadata.getValue(JsonProperty.class, String.class).orElse(argument.getName());
+                            final String simpleName = annotationMetadata.stringValue(JsonProperty.class).orElse(argument.getName());
                             props[i] = new CreatorProperty(
                                     PropertyName.construct(simpleName),
                                     javaType,

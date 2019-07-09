@@ -16,6 +16,7 @@
 package io.micronaut.context;
 
 import io.micronaut.context.annotation.BootstrapContextCompatible;
+import io.micronaut.context.annotation.ConfigurationReader;
 import io.micronaut.context.annotation.EachBean;
 import io.micronaut.context.annotation.EachProperty;
 import io.micronaut.context.env.BootstrapPropertySourceLocator;
@@ -119,12 +120,12 @@ public class DefaultApplicationContext extends DefaultBeanContext implements App
     }
 
     @Override
-    public <T> ApplicationContext registerSingleton(Class<T> type, T singleton, Qualifier<T> qualifier, boolean inject) {
+    public @Nonnull <T> ApplicationContext registerSingleton(@Nonnull Class<T> type, @Nonnull T singleton, @Nullable Qualifier<T> qualifier, boolean inject) {
         return (ApplicationContext) super.registerSingleton(type, singleton, qualifier, inject);
     }
 
     @Override
-    protected Iterable<BeanConfiguration> resolveBeanConfigurations() {
+    protected @Nonnull Iterable<BeanConfiguration> resolveBeanConfigurations() {
         if (resolvedConfigurations != null) {
             return resolvedConfigurations;
         }
@@ -132,7 +133,7 @@ public class DefaultApplicationContext extends DefaultBeanContext implements App
     }
 
     @Override
-    protected List<BeanDefinitionReference> resolveBeanDefinitionReferences() {
+    protected @Nonnull List<BeanDefinitionReference> resolveBeanDefinitionReferences() {
         if (resolvedBeanReferences != null) {
             return resolvedBeanReferences;
         }
@@ -147,7 +148,7 @@ public class DefaultApplicationContext extends DefaultBeanContext implements App
      * @return The environment instance
      */
     @Deprecated
-    protected DefaultEnvironment createEnvironment(String... environmentNames) {
+    protected @Nonnull DefaultEnvironment createEnvironment(@Nonnull String... environmentNames) {
         return createEnvironment(() -> Arrays.asList(environmentNames));
     }
 
@@ -157,7 +158,7 @@ public class DefaultApplicationContext extends DefaultBeanContext implements App
      * @param configuration The application context configuration
      * @return The environment instance
      */
-    protected DefaultEnvironment createEnvironment(ApplicationContextConfiguration configuration) {
+    protected @Nonnull DefaultEnvironment createEnvironment(@Nonnull ApplicationContextConfiguration configuration) {
         return new RuntimeConfiguredEnvironment(configuration);
     }
 
@@ -166,28 +167,28 @@ public class DefaultApplicationContext extends DefaultBeanContext implements App
      *
      * @return The conversion service
      */
-    protected ConversionService createConversionService() {
+    protected @Nonnull ConversionService createConversionService() {
         return ConversionService.SHARED;
     }
 
     @Override
-    public ConversionService<?> getConversionService() {
+    public @Nonnull ConversionService<?> getConversionService() {
         return conversionService;
     }
 
     @Override
-    public Environment getEnvironment() {
+    public @Nonnull Environment getEnvironment() {
         return environment;
     }
 
     @Override
-    public synchronized ApplicationContext start() {
+    public synchronized @Nonnull ApplicationContext start() {
         startEnvironment();
         return (ApplicationContext) super.start();
     }
 
     @Override
-    public ApplicationContext stop() {
+    public synchronized @Nonnull ApplicationContext stop() {
         return (ApplicationContext) super.stop();
     }
 
@@ -244,8 +245,8 @@ public class DefaultApplicationContext extends DefaultBeanContext implements App
             for (BeanDefinition candidate : candidates) {
                 if (candidate.hasDeclaredStereotype(EachProperty.class)) {
 
-                    String property = candidate.getValue(EachProperty.class, String.class).orElse(null);
-                    String primaryPrefix = candidate.getValue(EachProperty.class, "primary", String.class).orElse(null);
+                    String property = candidate.stringValue(EachProperty.class).orElse(null);
+                    String primaryPrefix = candidate.stringValue(EachProperty.class, "primary").orElse(null);
 
                     if (StringUtils.isNotEmpty(property)) {
                         Map entries = getProperty(property, Map.class, Collections.emptyMap());
@@ -267,7 +268,7 @@ public class DefaultApplicationContext extends DefaultBeanContext implements App
                         throw new IllegalArgumentException("Blank value specified to @Each property for bean: " + candidate);
                     }
                 } else if (candidate.hasDeclaredStereotype(EachBean.class)) {
-                    Class dependentType = candidate.getValue(EachBean.class, Class.class).orElse(null);
+                    Class dependentType = candidate.classValue(EachBean.class).orElse(null);
                     if (dependentType == null) {
                         transformedCandidates.add(candidate);
                         continue;
@@ -313,7 +314,43 @@ public class DefaultApplicationContext extends DefaultBeanContext implements App
                         }
                     }
                 } else {
-                    transformedCandidates.add(candidate);
+                    if (candidate.hasStereotype(ConfigurationReader.class)) {
+
+                        candidate.stringValue(ConfigurationReader.class, "prefix")
+                                .ifPresent(prefix -> {
+                                    int starIndex = prefix.indexOf("*");
+                                    if (starIndex > -1) {
+                                        String eachProperty = prefix.substring(0, starIndex);
+                                        if (eachProperty.endsWith(".")) {
+                                            eachProperty = eachProperty.substring(0, eachProperty.length() - 1);
+                                        }
+
+                                        if (StringUtils.isNotEmpty(eachProperty)) {
+                                            Map entries = getProperty(eachProperty, Map.class, Collections.emptyMap());
+                                            if (!entries.isEmpty()) {
+                                                for (Object key : entries.keySet()) {
+
+                                                    BeanDefinitionDelegate delegate = BeanDefinitionDelegate.create(candidate);
+                                                    delegate.put(EachProperty.class.getName(), delegate.getBeanType());
+                                                    delegate.put(Named.class.getName(), key.toString());
+
+                                                    if (delegate.isEnabled(this) &&
+                                                            containsProperties(prefix.replace("*", key.toString()))) {
+                                                        transformedCandidates.add(delegate);
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            throw new IllegalArgumentException("Blank value specified to @Each property for bean: " + candidate);
+                                        }
+
+                                    } else {
+                                        transformedCandidates.add(candidate);
+                                    }
+                                });
+                    } else {
+                        transformedCandidates.add(candidate);
+                    }
                 }
             }
             if (LOG.isDebugEnabled()) {
@@ -440,7 +477,36 @@ public class DefaultApplicationContext extends DefaultBeanContext implements App
      */
     private static class BootstrapEnvironment extends DefaultEnvironment {
         BootstrapEnvironment(ClassPathResourceLoader resourceLoader, ConversionService conversionService, String... activeEnvironments) {
-            super(resourceLoader, conversionService, activeEnvironments);
+            super(new ApplicationContextConfiguration() {
+                @Override
+                public Optional<Boolean> getDeduceEnvironments() {
+                    return Optional.of(false);
+                }
+
+                @Nonnull
+                @Override
+                public ClassLoader getClassLoader() {
+                    return resourceLoader.getClassLoader();
+                }
+
+                @Nonnull
+                @Override
+                public List<String> getEnvironments() {
+                    return Arrays.asList(activeEnvironments);
+                }
+
+                @Nonnull
+                @Override
+                public ConversionService<?> getConversionService() {
+                    return conversionService;
+                }
+
+                @Nonnull
+                @Override
+                public ClassPathResourceLoader getResourceLoader() {
+                    return resourceLoader;
+                }
+            });
         }
 
         @Override
@@ -467,17 +533,23 @@ public class DefaultApplicationContext extends DefaultBeanContext implements App
         }
 
         @Override
-        public Environment getEnvironment() {
+        public @Nonnull Environment getEnvironment() {
             return bootstrapEnvironment;
         }
 
         @Override
-        protected BootstrapEnvironment createEnvironment(String... environmentNames) {
+        protected @Nonnull BootstrapEnvironment createEnvironment(@Nonnull String... environmentNames) {
+            return bootstrapEnvironment;
+        }
+
+        @Nonnull
+        @Override
+        protected BootstrapEnvironment createEnvironment(@Nonnull ApplicationContextConfiguration configuration) {
             return bootstrapEnvironment;
         }
 
         @Override
-        protected List<BeanDefinitionReference> resolveBeanDefinitionReferences() {
+        protected @Nonnull List<BeanDefinitionReference> resolveBeanDefinitionReferences() {
             List<BeanDefinitionReference> refs = super.resolveBeanDefinitionReferences();
             // we cache the resolved beans in a local field to avoid the I/O cost of resolving them twice
             // once for the bootstrap context and again for the main context
@@ -488,7 +560,7 @@ public class DefaultApplicationContext extends DefaultBeanContext implements App
         }
 
         @Override
-        protected Iterable<BeanConfiguration> resolveBeanConfigurations() {
+        protected @Nonnull Iterable<BeanConfiguration> resolveBeanConfigurations() {
             Iterable<BeanConfiguration> beanConfigurations = super.resolveBeanConfigurations();
             // we cache the resolved configurations in a local field to avoid the I/O cost of resolving them twice
             // once for the bootstrap context and again for the main context
@@ -517,7 +589,7 @@ public class DefaultApplicationContext extends DefaultBeanContext implements App
         }
 
         @Override
-        public void publishEvent(Object event) {
+        public void publishEvent(@Nonnull Object event) {
             // no-op .. the bootstrap context shouldn't publish events
         }
 

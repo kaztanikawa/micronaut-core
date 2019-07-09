@@ -25,13 +25,14 @@ import io.micronaut.core.convert.format.MapFormat;
 import io.micronaut.core.io.socket.SocketUtils;
 import io.micronaut.core.naming.NameUtils;
 import io.micronaut.core.naming.conventions.StringConvention;
+import io.micronaut.core.reflect.ClassUtils;
 import io.micronaut.core.type.Argument;
+import io.micronaut.core.util.ArgumentUtils;
 import io.micronaut.core.util.CollectionUtils;
 import io.micronaut.core.util.StringUtils;
 import io.micronaut.core.value.MapPropertyResolver;
 import io.micronaut.core.value.PropertyResolver;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -39,7 +40,6 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 /**
  * <p>A {@link PropertyResolver} that resolves from one or many {@link PropertySource} instances.</p>
@@ -49,8 +49,9 @@ import java.util.stream.Collectors;
  */
 public class PropertySourcePropertyResolver implements PropertyResolver {
 
-    private static final Logger LOG = LoggerFactory.getLogger(PropertySourcePropertyResolver.class);
+    private static final Logger LOG = ClassUtils.getLogger(PropertySourcePropertyResolver.class);
     private static final Pattern RANDOM_PATTERN = Pattern.compile("\\$\\{\\s?random\\.(\\S+?)\\}");
+    private static final char[] DOT_DASH = new char[] {'.', '-'};
 
     protected final ConversionService<?> conversionService;
     protected final PropertyPlaceholderResolver propertyPlaceholderResolver;
@@ -70,7 +71,7 @@ public class PropertySourcePropertyResolver implements PropertyResolver {
      */
     public PropertySourcePropertyResolver(ConversionService<?> conversionService) {
         this.conversionService = conversionService;
-        this.propertyPlaceholderResolver = new DefaultPropertyPlaceholderResolver(this);
+        this.propertyPlaceholderResolver = new DefaultPropertyPlaceholderResolver(this, conversionService);
     }
 
     /**
@@ -185,10 +186,11 @@ public class PropertySourcePropertyResolver implements PropertyResolver {
     }
 
     @Override
-    public <T> Optional<T> getProperty(@Nullable String name, ArgumentConversionContext<T> conversionContext) {
+    public <T> Optional<T> getProperty(@Nonnull String name, @Nonnull ArgumentConversionContext<T> conversionContext) {
         if (StringUtils.isEmpty(name)) {
             return Optional.empty();
         } else {
+            ArgumentUtils.requireNonNull("conversionContext", conversionContext);
             Class<T> requiredType = conversionContext.getArgument().getType();
             boolean cacheableType = requiredType == Boolean.class || requiredType == String.class;
             String cacheName = name + '|' + requiredType.getSimpleName();
@@ -327,7 +329,7 @@ public class PropertySourcePropertyResolver implements PropertyResolver {
         // special handling for maps for resolving sub keys
         Properties properties = new Properties();
         AnnotationMetadata annotationMetadata = conversionContext.getAnnotationMetadata();
-        StringConvention keyConvention = annotationMetadata.getValue(MapFormat.class, "keyFormat", StringConvention.class)
+        StringConvention keyConvention = annotationMetadata.enumValue(MapFormat.class, "keyFormat", StringConvention.class)
                                                            .orElse(StringConvention.RAW);
         String prefix = name + '.';
         entries.entrySet().stream()
@@ -353,8 +355,8 @@ public class PropertySourcePropertyResolver implements PropertyResolver {
     protected Map<String, Object> resolveSubMap(String name, Map<String, Object> entries, ArgumentConversionContext<?> conversionContext) {
         // special handling for maps for resolving sub keys
         AnnotationMetadata annotationMetadata = conversionContext.getAnnotationMetadata();
-        StringConvention keyConvention = annotationMetadata.getValue(MapFormat.class, "keyFormat", StringConvention.class).orElse(StringConvention.RAW);
-        MapFormat.MapTransformation transformation = annotationMetadata.getValue(
+        StringConvention keyConvention = annotationMetadata.enumValue(MapFormat.class, "keyFormat", StringConvention.class).orElse(StringConvention.RAW);
+        MapFormat.MapTransformation transformation = annotationMetadata.enumValue(
                 MapFormat.class,
                 "transformation",
                 MapFormat.MapTransformation.class)
@@ -452,10 +454,11 @@ public class PropertySourcePropertyResolver implements PropertyResolver {
                                 if (v instanceof List) {
                                     list = (List) v;
                                 } else {
-                                    list = new ArrayList(number);
+                                    list = new ArrayList(10);
                                     entries.put(resolvedProperty, list);
                                 }
-                                list.add(number, value);
+                                fill(list, number, null);
+                                list.set(number, value);
                             } else {
                                 Map map;
                                 if (v instanceof Map) {
@@ -616,23 +619,52 @@ public class PropertySourcePropertyResolver implements PropertyResolver {
     private List<String> resolvePropertiesForConvention(String property, PropertySource.PropertyConvention convention) {
         switch (convention) {
             case ENVIRONMENT_VARIABLE:
-                String[] tokens = property.split("_");
-                List<String> properties = new ArrayList<>(tokens.length);
+                property = property.toLowerCase(Locale.ENGLISH);
 
-                StringBuilder path = new StringBuilder();
-                int len = tokens.length;
-                if (len > 1) {
-                    for (int i = 0; i < len; i++) {
-                        String token = tokens[i];
-                        if (i < (len - 1)) {
-                            path.append(token.toLowerCase(Locale.ENGLISH)).append('.');
-                            String[] subTokens = Arrays.copyOfRange(tokens, i + 1, len);
-                            properties.add(path + Arrays.stream(subTokens).map(s -> s.toLowerCase(Locale.ENGLISH)).collect(Collectors.joining("")));
-                        }
+                List<Integer> separatorIndexList = new ArrayList<>();
+                char[] propertyArr = property.toCharArray();
+                for (int i = 0; i < propertyArr.length; i++) {
+                    if (propertyArr[i] == '_') {
+                        separatorIndexList.add(i);
                     }
-                    return properties;
+                }
+
+                if (!separatorIndexList.isEmpty()) {
+                    //store the index in the array where each separator is
+                    int[] separatorIndexes = separatorIndexList.stream().mapToInt(Integer::intValue).toArray();
+
+                    int separatorCount = separatorIndexes.length;
+                    //halves is used to determine when to flip the separator
+                    int[] halves = new int[separatorCount];
+                    //stores the separator per half
+                    byte[] separator = new byte[separatorCount];
+                    //the total number of permutations. 2 to the power of the number of separators
+                    int permutations = (int) Math.pow(2, separatorCount);
+
+                    //initialize the halves
+                    //ex 4, 2, 1 for A_B_C_D
+                    for (int i = 0; i < halves.length; i++) {
+                        int start = (i == 0) ? permutations : halves[i - 1];
+                        halves[i] = start / 2;
+                    }
+
+                    String[] properties = new String[permutations];
+
+                    for (int i = 0; i < permutations; i++) {
+                        int round = i + 1;
+                        for (int s = 0; s < separatorCount; s++) {
+                            //mutate the array with the separator
+                            propertyArr[separatorIndexes[s]] = DOT_DASH[separator[s]];
+                            if (round % halves[s] == 0) {
+                                separator[s] ^= 1;
+                            }
+                        }
+                        properties[i] = new String(propertyArr);
+                    }
+
+                    return Arrays.asList(properties);
                 } else {
-                    return Collections.singletonList(property.toLowerCase(Locale.ENGLISH));
+                    return Collections.singletonList(property);
                 }
             default:
                 return Collections.singletonList(
@@ -647,5 +679,13 @@ public class PropertySourcePropertyResolver implements PropertyResolver {
             name = name.substring(0, i);
         }
         return name;
+    }
+
+    private void fill(List list, Integer toIndex, Object value) {
+        if (toIndex >= list.size()) {
+            for (int i = list.size(); i <= toIndex; i++) {
+                list.add(i, value);
+            }
+        }
     }
 }

@@ -16,24 +16,24 @@
 package io.micronaut.http.client
 
 import groovy.transform.EqualsAndHashCode
-import io.micronaut.http.annotation.QueryValue
-import io.micronaut.http.client.annotation.Client
-import io.micronaut.http.client.multipart.MultipartBody
-import io.reactivex.Flowable
 import io.micronaut.context.ApplicationContext
 import io.micronaut.http.HttpRequest
 import io.micronaut.http.HttpResponse
 import io.micronaut.http.HttpStatus
 import io.micronaut.http.MediaType
-import io.micronaut.http.annotation.Body
-import io.micronaut.http.annotation.Controller
-import io.micronaut.http.annotation.Header
+import io.micronaut.http.annotation.*
+import io.micronaut.http.client.annotation.Client
 import io.micronaut.http.client.exceptions.HttpClientException
+import io.micronaut.http.client.multipart.MultipartBody
+import io.micronaut.http.multipart.CompletedFileUpload
+import io.micronaut.core.type.Argument
 import io.micronaut.runtime.server.EmbeddedServer
-import io.micronaut.http.annotation.Post
+import io.reactivex.Flowable
 import spock.lang.AutoCleanup
 import spock.lang.Shared
 import spock.lang.Specification
+
+import java.nio.charset.StandardCharsets
 
 /**
  * @author Graeme Rocher
@@ -46,7 +46,6 @@ class HttpPostSpec extends Specification {
     ApplicationContext context = ApplicationContext.run()
 
     @Shared
-    @AutoCleanup
     EmbeddedServer embeddedServer = context.getBean(EmbeddedServer).start()
 
     @Shared
@@ -264,6 +263,23 @@ class HttpPostSpec extends Specification {
         body == "a,b"
     }
 
+    void "test multipart request with custom charset for part"() {
+        when:
+        BlockingHttpClient blockingHttpClient = client.toBlocking()
+        String body = blockingHttpClient.retrieve(
+                HttpRequest.POST("/post/multipartCharset", MultipartBody.builder()
+                        .addPart("file", "test.csv", new MediaType("text/csv; charset=ISO-8859-1"), "micronaut,rocks".getBytes(StandardCharsets.ISO_8859_1))
+                        .build()
+                )
+                        .contentType(MediaType.MULTIPART_FORM_DATA_TYPE)
+                        .accept(MediaType.TEXT_PLAIN_TYPE),
+                String
+        )
+
+        then:
+        body == StandardCharsets.ISO_8859_1.toString()
+    }
+
     void "test url encoded request with a string body"() {
         when:
         BlockingHttpClient blockingHttpClient = client.toBlocking()
@@ -283,6 +299,62 @@ class HttpPostSpec extends Specification {
         context.getBean(PostClient).call() == "0"
     }
 
+    void "test simple post request url encoded"() {
+        given:
+        def toSend = new Book(title: "The Stand", pages: 1000)
+        when:
+        BlockingHttpClient blockingHttpClient = client.toBlocking()
+        Book book = blockingHttpClient.retrieve(
+                HttpRequest.POST("/post/query/url-encoded", toSend)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED_TYPE)
+                        .accept(MediaType.APPLICATION_JSON_TYPE),
+
+                Book
+        )
+
+        then:
+        book == toSend
+    }
+
+    void "test posting an array of simple types"() {
+        BlockingHttpClient blockingHttpClient = client.toBlocking()
+        List<Boolean> booleans = blockingHttpClient.retrieve(
+                HttpRequest.POST("/post/booleans", "[true, true, false]"),
+
+                Argument.of(List.class, Boolean.class)
+        )
+
+        expect:
+        booleans[0] == true
+        booleans[1] == true
+        booleans[2] == false
+    }
+
+    void "test request generic type no body"() {
+        when:
+        def response = HttpClient.create(embeddedServer.getURL()).toBlocking().exchange(
+                HttpRequest.POST('/post/requestObject', ''), String
+        )
+
+        then:
+        response.body() == "request-object"
+    }
+
+    void "test multiple params single body"() {
+        BlockingHttpClient blockingHttpClient = client.toBlocking()
+        String data = blockingHttpClient.retrieve(
+                HttpRequest.POST("/post/bodyParts", '{"id":5,"name":"Sally"}')
+                        .contentType(MediaType.APPLICATION_JSON_TYPE)
+                        .accept(MediaType.TEXT_PLAIN_TYPE),
+
+                String
+        )
+
+        expect:
+        data == "5 - Sally"
+        context.getBean(PostClient).bodyParts("Joe", 6) == "6 - Joe"
+    }
+
     @Controller('/post')
     static class PostController {
 
@@ -300,6 +372,13 @@ class HttpPostSpec extends Specification {
             assert title == book.title
             return book
         }
+
+        @Post(uri = '/query/url-encoded', consumes = MediaType.APPLICATION_FORM_URLENCODED)
+        Book simpleUrlEncoded(@Body Book book, String title) {
+            assert title == book.title
+            return book
+        }
+
 
         @Post('/queryNoBody')
         Book simple(@QueryValue("title") String title) {
@@ -347,6 +426,28 @@ class HttpPostSpec extends Specification {
         String multipleParams(@Body Params data) {
             return data.param.join(",")
         }
+
+        @Post(uri = "/multipartCharset",
+                consumes = MediaType.MULTIPART_FORM_DATA,
+                produces = MediaType.TEXT_PLAIN)
+        String multipartCharset(@Body CompletedFileUpload file) {
+            return file.fileUpload.getCharset()
+        }
+
+        @Post(uri = "/booleans")
+        List<Boolean> booleans(@Body List<Boolean> booleans) {
+            return booleans
+        }
+
+        @Post("/requestObject")
+        String requestObject(HttpRequest<Object> request) {
+            "request-object"
+        }
+
+        @Post(uri = "/bodyParts", produces = MediaType.TEXT_PLAIN)
+        String bodyParts(String name, Integer id) {
+            "$id - $name"
+        }
     }
 
     @EqualsAndHashCode
@@ -364,5 +465,8 @@ class HttpPostSpec extends Specification {
 
         @Post("/noBody")
         String call()
+
+        @Post(uri = "/bodyParts", consumes = MediaType.TEXT_PLAIN)
+        String bodyParts(String name, Integer id)
     }
 }

@@ -15,6 +15,7 @@
  */
 package io.micronaut.context;
 
+import io.micronaut.context.annotation.EachBean;
 import io.micronaut.context.annotation.Parameter;
 import io.micronaut.context.exceptions.BeanInstantiationException;
 import io.micronaut.core.annotation.AnnotationMetadata;
@@ -25,7 +26,6 @@ import io.micronaut.core.type.Argument;
 import io.micronaut.inject.BeanDefinition;
 import io.micronaut.inject.ParametrizedBeanFactory;
 
-import javax.annotation.Nullable;
 import javax.inject.Qualifier;
 import java.lang.annotation.Annotation;
 import java.util.Arrays;
@@ -86,6 +86,7 @@ public abstract class AbstractParametrizedBeanDefinition<T> extends AbstractBean
 
         requiredArgumentValues = requiredArgumentValues != null ? new LinkedHashMap<>(requiredArgumentValues) : Collections.emptyMap();
         Argument<?>[] requiredArguments = getRequiredArguments();
+        Optional<Class> eachBeanType = definition.classValue(EachBean.class);
         for (Argument<?> requiredArgument : requiredArguments) {
             if (requiredArgument.getType() == BeanResolutionContext.class) {
                 requiredArgumentValues.put(requiredArgument.getName(), resolutionContext);
@@ -95,7 +96,10 @@ public abstract class AbstractParametrizedBeanDefinition<T> extends AbstractBean
             try {
                 path.pushConstructorResolve(this, requiredArgument);
                 String argumentName = requiredArgument.getName();
-                if (!requiredArgumentValues.containsKey(argumentName) && !requiredArgument.isAnnotationPresent(Nullable.class)) {
+                if (!requiredArgumentValues.containsKey(argumentName) && !requiredArgument.isNullable()) {
+                    if (eachBeanType.filter(type -> type == requiredArgument.getType()).isPresent()) {
+                        return null;
+                    }
                     throw new BeanInstantiationException(resolutionContext, "Missing bean argument value: " + argumentName);
                 }
                 Object value = requiredArgumentValues.get(argumentName);

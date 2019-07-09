@@ -15,6 +15,7 @@
  */
 package io.micronaut.http;
 
+import io.micronaut.core.annotation.TypeHint;
 import io.micronaut.core.convert.ConversionService;
 import io.micronaut.core.naming.NameUtils;
 import io.micronaut.core.util.StringUtils;
@@ -49,6 +50,7 @@ import java.util.stream.Collectors;
  * @author Graeme Rocher
  * @since 1.0
  */
+@TypeHint(value = MediaType[].class)
 public class MediaType implements CharSequence {
 
     /**
@@ -517,7 +519,7 @@ public class MediaType implements CharSequence {
     public boolean isTextBased() {
         boolean matches = textTypePatterns.stream().anyMatch((p) -> p.matcher(name).matches());
         if (!matches) {
-            matches = subtype.equals("json") || subtype.equals("xml");
+            matches = subtype.equalsIgnoreCase("json") || subtype.equalsIgnoreCase("xml");
         }
         return matches;
     }
@@ -544,6 +546,11 @@ public class MediaType implements CharSequence {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Only the name is matched. Parameters are not included.
+     */
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -555,7 +562,7 @@ public class MediaType implements CharSequence {
 
         MediaType mediaType = (MediaType) o;
 
-        return name.equals(mediaType.name);
+        return name.equalsIgnoreCase(mediaType.name);
     }
 
     @Override

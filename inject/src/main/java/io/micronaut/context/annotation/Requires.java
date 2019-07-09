@@ -54,9 +54,7 @@ public @interface Requires {
     String[] notEnv() default {};
 
     /**
-     * Expresses that the given property should be set for the bean to load. By default the value of the property
-     * should be "yes", "YES", "true", "TRUE", "y" or "Y" for it to be considered to be set. If a different value is
-     * to be used then the {@link #value()} method should be used.
+     * Expresses that the given property should be set for the bean to load.
      *
      * @return The property that should be set.
      */
@@ -179,6 +177,18 @@ public @interface Requires {
      * @return The property or properties that should be missing
      */
     String missingProperty() default "";
+
+    /**
+     * Expresses the given resources should exist for the bean configuration to load.
+     * Resources can be anything that {@link io.micronaut.core.io.ResourceResolver} can read, eg:
+     * <pre>
+     *  file:/path/to/file.txt
+     *  classpath:com/mycompany/file.txt
+     * </pre>
+     *
+     * @return The file paths
+     */
+    String[] resources() default {};
 
     /**
      * Used to express a required SDK version.

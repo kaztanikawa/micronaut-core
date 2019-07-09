@@ -43,6 +43,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
@@ -70,8 +71,9 @@ public class UploadController {
 
     @Post(value = "/receive-file-upload", consumes = MediaType.MULTIPART_FORM_DATA)
     public Publisher<HttpResponse> receiveFileUpload(StreamingFileUpload data, String title) {
+        long size = data.getDefinedSize();
         return Flowable.fromPublisher(data.transferTo(title + ".json"))
-                       .map(success -> success ? HttpResponse.ok( "Uploaded " + data.getSize()  ) : HttpResponse.status(HttpStatus.INTERNAL_SERVER_ERROR, "Something bad happened"));
+                       .map(success -> success ? HttpResponse.ok( "Uploaded " + size  ) : HttpResponse.status(HttpStatus.INTERNAL_SERVER_ERROR, "Something bad happened"));
     }
 
     @Post(value = "/receive-completed-file-upload", consumes = MediaType.MULTIPART_FORM_DATA)
@@ -101,6 +103,15 @@ public class UploadController {
                     return res;
                 }
         );
+    }
+
+    @Post(value = "/receive-flow-parts", consumes = MediaType.MULTIPART_FORM_DATA)
+    public Single<HttpResponse> receiveFlowParts(Flowable<PartData> data) {
+        return data.toList().doOnSuccess(parts -> {
+            for (PartData part : parts) {
+                part.getBytes(); //intentionally releasing the parts after all data has been received
+            }
+        }).map(parts -> HttpResponse.ok());
     }
 
     @Post(value = "/receive-flow-data", consumes = MediaType.MULTIPART_FORM_DATA, produces = MediaType.TEXT_PLAIN)

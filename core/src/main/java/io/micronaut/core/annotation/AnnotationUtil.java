@@ -38,6 +38,8 @@ public class AnnotationUtil {
 
     public static final List<String> INTERNAL_ANNOTATION_NAMES = Arrays.asList(
         Retention.class.getName(),
+        "javax.annotation.meta.TypeQualifier",
+        "javax.annotation.meta.TypeQualifierNickname",
         "kotlin.annotation.Retention",
         Inherited.class.getName(),
         SuppressWarnings.class.getName(),
@@ -48,6 +50,14 @@ public class AnnotationUtil {
         Target.class.getName(),
         "kotlin.annotation.Target",
         KOTLIN_METADATA
+    );
+
+    /**
+     * Packages excludes from stereotype processing.
+     */
+    public static final List<String> STEREOTYPE_EXCLUDES = Arrays.asList(
+            "javax.annotation",
+            "edu.umd.cs.findbugs.annotations"
     );
 
     /**
@@ -80,11 +90,21 @@ public class AnnotationUtil {
         }
     };
 
+    /**
+     * Simple Annotation name used for nullable.
+     */
+    public static final String NULLABLE = "javax.annotation.Nullable";
+
+    /**
+     * Simple Annotation name used for non-null.
+     */
+    public static final String NON_NULL = "javax.annotation.Nonnull";
+
     private static final Map<Integer, List<String>> INTERN_LIST_POOL = new ConcurrentHashMap<>();
     private static final Map<String, Map<String, Object>> INTERN_MAP_POOL = new ConcurrentHashMap<>();
 
     /**
-     * Converts the given objects into a set of interned strings contained within an internal pool of lists. See {@link String#intern()}.
+     * Converts the given objects into a set of potentially cached and interned strings contained within an internal pool of lists. See {@link String#intern()}.
      *
      * <p>This method serves the purpose of reducing memory footprint by pooling common lists of annotations in compiled {@link AnnotationMetadata}</p>
      *
@@ -104,7 +124,7 @@ public class AnnotationUtil {
 
 
     /**
-     * Converts the given objects into a map of interned strings where the keys and values are alternating entries in the passed array. See {@link String#intern()}.
+     * Converts the given objects into a map of potentially cached and interned strings where the keys and values are alternating entries in the passed array. See {@link String#intern()}.
      *
      * <p>The values stored at even number positions will be converted to strings and interned.</p>
      *
@@ -127,12 +147,15 @@ public class AnnotationUtil {
         if (len == 2) {
             Object value = values[1];
             if (value == Collections.EMPTY_MAP) {
-                String key = values[0].toString().intern();
+                String key = values[0].toString();
                 return INTERN_MAP_POOL.computeIfAbsent(key, s ->
                         Collections.singletonMap(s, Collections.emptyMap())
                 );
             } else {
-                return StringUtils.internMapOf(values);
+                return Collections.singletonMap(
+                        values[0].toString(),
+                        value
+                );
             }
 
         } else {

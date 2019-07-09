@@ -67,6 +67,7 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
     private static final String EC2_WINDOWS_HYPERVISOR_CMD = "wmic path win32_computersystemproduct get uuid";
     private static final String FILE_SEPARATOR = ",";
     private static final Logger LOG = LoggerFactory.getLogger(DefaultEnvironment.class);
+    private static final String AWS_LAMBDA_FUNCTION_NAME_ENV = "AWS_LAMBDA_FUNCTION_NAME";
     private static final String K8S_ENV = "KUBERNETES_SERVICE_HOST";
     private static final String PCF_ENV = "VCAP_SERVICES";
     private static final String HEROKU_DYNO = "DYNO";
@@ -74,6 +75,8 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
     private static final int DEFAULT_READ_TIMEOUT = 500;
     private static final int DEFAULT_CONNECT_TIMEOUT = 500;
     private static final String GOOGLE_COMPUTE_METADATA = "http://metadata.google.internal";
+    private static final String ORACLE_CLOUD_ASSET_TAG_FILE = "/sys/devices/virtual/dmi/id/chassis_asset_tag";
+    private static final String ORACLE_CLOUD_WINDOWS_ASSET_TAG_CMD = "wmic systemenclosure get smbiosassettag";
     private static final String DO_SYS_VENDOR_FILE = "/sys/devices/virtual/dmi/id/sys_vendor";
     private static final Boolean DEDUCE_ENVIRONMENT_DEFAULT = true;
 
@@ -93,6 +96,7 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
     private final Map<String, Boolean> presenceCache = new ConcurrentHashMap<>();
     private final AtomicBoolean reading = new AtomicBoolean(false);
     private final Boolean deduceEnvironments;
+    private final ApplicationContextConfiguration configuration;
 
     /**
      * @param classLoader The class loader
@@ -141,10 +145,18 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
      * @param conversionService  The conversion service
      * @param deduceEnvironments Option to deduce environments
      * @param names              The names
+     * @deprecated  Use {@link #DefaultEnvironment(ApplicationContextConfiguration)} instead.
      */
     @SuppressWarnings("MagicNumber")
+    @Deprecated
     public DefaultEnvironment(ClassPathResourceLoader resourceLoader, ConversionService conversionService, @Nullable Boolean deduceEnvironments, String... names) {
         this(new ApplicationContextConfiguration() {
+            @Nonnull
+            @Override
+            public ClassLoader getClassLoader() {
+                return resourceLoader.getClassLoader();
+            }
+
             @Nonnull
             @Override
             public List<String> getEnvironments() {
@@ -177,6 +189,7 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
      */
     public DefaultEnvironment(@Nonnull ApplicationContextConfiguration configuration) {
         super(configuration.getConversionService());
+        this.configuration = configuration;
         Set<String> environments = new LinkedHashSet<>(3);
         List<String> specifiedNames = configuration.getEnvironments();
 
@@ -242,6 +255,15 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
         if (isRunning() && !reading.get()) {
             resetCaches();
             processPropertySource(propertySource, PropertySource.PropertyConvention.JAVA_PROPERTIES);
+        }
+        return this;
+    }
+
+    @Override
+    public Environment removePropertySource(PropertySource propertySource) {
+        propertySources.remove(propertySource.getName());
+        if (isRunning() && !reading.get()) {
+            resetCaches();
         }
         return this;
     }
@@ -516,8 +538,10 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
         if (!this.propertySources.containsKey(SystemPropertiesPropertySource.NAME)) {
             propertySources.add(new SystemPropertiesPropertySource());
         }
-        if (!this.propertySources.containsKey(EnvironmentPropertySource.NAME)) {
-            propertySources.add(new EnvironmentPropertySource());
+        if (!this.propertySources.containsKey(EnvironmentPropertySource.NAME) && configuration.isEnvironmentPropertySource()) {
+            propertySources.add(new EnvironmentPropertySource(
+                    configuration.getEnvironmentVariableIncludes(),
+                    configuration.getEnvironmentVariableExcludes()));
         }
         return propertySources;
     }
@@ -567,12 +591,14 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
     }
 
     private void loadPropertySourceFromLoader(String name, PropertySourceLoader propertySourceLoader, List<PropertySource> propertySources) {
-        Optional<PropertySource> defaultPropertySource = propertySourceLoader.load(name, this, null);
+        Optional<PropertySource> defaultPropertySource = propertySourceLoader.load(name, this);
         defaultPropertySource.ifPresent(propertySources::add);
         Set<String> activeNames = getActiveNames();
-        for (String activeName : activeNames) {
-            Optional<PropertySource> propertySource = propertySourceLoader.load(name, this, activeName);
+        int i = 0;
+        for (String activeName: activeNames) {
+            Optional<PropertySource> propertySource = propertySourceLoader.loadEnv(name, this, ActiveEnvironment.of(activeName, i));
             propertySource.ifPresent(propertySources::add);
+            i++;
         }
     }
 
@@ -607,7 +633,12 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
             synchronized (EnvironmentsAndPackage.class) { // double check
                 environmentsAndPackage = this.environmentsAndPackage;
                 if (environmentsAndPackage == null) {
-                    environmentsAndPackage = deduceEnvironmentsAndPackage(shouldDeduceEnvironments(), extendedDeduction, extendedDeduction);
+                    environmentsAndPackage = deduceEnvironmentsAndPackage(
+                            shouldDeduceEnvironments(),
+                            extendedDeduction,
+                            extendedDeduction,
+                            !extendedDeduction
+                    );
                     this.environmentsAndPackage = environmentsAndPackage;
                 }
             }
@@ -618,7 +649,9 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
     private static EnvironmentsAndPackage deduceEnvironmentsAndPackage(
             boolean deduceEnvironments,
             boolean deduceComputePlatform,
-            boolean inspectTrace) {
+            boolean inspectTrace,
+            boolean deduceFunctionPlatform
+        ) {
 
 
         EnvironmentsAndPackage environmentsAndPackage = new EnvironmentsAndPackage();
@@ -698,6 +731,10 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
                                 environments.add(AMAZON_EC2);
                                 environments.add(Environment.CLOUD);
                                 break;
+                            case ORACLE_CLOUD:
+                                environments.add(ORACLE_CLOUD);
+                                environments.add(Environment.CLOUD);
+                                break;
                             case AZURE:
                                 // not yet implemented
                                 environments.add(AZURE);
@@ -720,6 +757,14 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
                         }
                     }
                 }
+            }
+        }
+
+        if (deduceFunctionPlatform) {
+            // deduce AWS Lambda
+            if (StringUtils.isNotEmpty(System.getenv(AWS_LAMBDA_FUNCTION_NAME_ENV))) {
+                environments.add(Environment.AMAZON_EC2);
+                environments.add(Environment.CLOUD);
             }
         }
 
@@ -807,6 +852,10 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
             return ComputePlatform.GOOGLE_COMPUTE;
         }
 
+        if (isWindows ? isOracleCloudWindows() : isOracleCloudLinux()) {
+            return ComputePlatform.ORACLE_CLOUD;
+        }
+
         if (isDigitalOcean()) {
             return ComputePlatform.DIGITAL_OCEAN;
         }
@@ -845,6 +894,67 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
         return false;
     }
 
+    @SuppressWarnings("MagicNumber")
+    private static boolean isOracleCloudLinux() {
+        if (readFile(ORACLE_CLOUD_ASSET_TAG_FILE).toLowerCase().contains("oraclecloud")) {
+            return true;
+        }
+        return false;
+    }
+
+    private static Optional<Process> runWindowsCmd(String cmd) {
+        try {
+            ProcessBuilder builder = new ProcessBuilder();
+            builder.command("cmd.exe", "/c", cmd);
+            builder.redirectErrorStream(true);
+            builder.directory(new File(System.getProperty("user.home")));
+            Process process = builder.start();
+            return Optional.of(process);
+        } catch (IOException e) {
+
+        }
+        return Optional.empty();
+    }
+
+    private static StringBuilder readProcessStream(Process process) {
+        StringBuilder stdout = new StringBuilder();
+
+        try {
+            //Read out dir output
+            InputStream is = process.getInputStream();
+            InputStreamReader isr = new InputStreamReader(is);
+            BufferedReader br = new BufferedReader(isr);
+            String line;
+            while ((line = br.readLine()) != null) {
+                stdout.append(line);
+            }
+        } catch (IOException e) {
+
+        }
+
+        return stdout;
+    }
+
+    private static boolean isOracleCloudWindows() {
+        Optional<Process> optionalProcess = runWindowsCmd(ORACLE_CLOUD_WINDOWS_ASSET_TAG_CMD);
+        if (!optionalProcess.isPresent()) {
+            return false;
+        }
+        Process process = optionalProcess.get();
+        StringBuilder stdout = readProcessStream(process);
+
+        //Wait to get exit value
+        try {
+            int exitValue = process.waitFor();
+            if (exitValue == 0 && stdout.toString().toLowerCase().contains("oraclecloud")) {
+                return true;
+            }
+        } catch (InterruptedException e) {
+            // test negative
+        }
+        return false;
+    }
+
     private static boolean isEC2Linux() {
         if (readFile(EC2_LINUX_HYPERVISOR_FILE).startsWith("ec2")) {
             return true;
@@ -864,35 +974,20 @@ public class DefaultEnvironment extends PropertySourcePropertyResolver implement
     }
 
     private static boolean isEC2Windows() {
+        Optional<Process> optionalProcess = runWindowsCmd(EC2_WINDOWS_HYPERVISOR_CMD);
+        if (!optionalProcess.isPresent()) {
+            return false;
+        }
+        Process process = optionalProcess.get();
+        StringBuilder stdout = readProcessStream(process);
+        //Wait to get exit value
         try {
-            ProcessBuilder builder = new ProcessBuilder();
-            builder.command("cmd.exe", "/c", EC2_WINDOWS_HYPERVISOR_CMD);
-            builder.redirectErrorStream(true);
-            builder.directory(new File(System.getProperty("user.home")));
-            Process process = builder.start();
-
-            //Read out dir output
-            InputStream is = process.getInputStream();
-            InputStreamReader isr = new InputStreamReader(is);
-            BufferedReader br = new BufferedReader(isr);
-            String line;
-            StringBuilder stdout = new StringBuilder();
-            while ((line = br.readLine()) != null) {
-                stdout.append(line);
+            int exitValue = process.waitFor();
+            if (exitValue == 0 && stdout.toString().startsWith("EC2")) {
+                return true;
             }
-
-            //Wait to get exit value
-            try {
-                int exitValue = process.waitFor();
-                if (exitValue == 0 && stdout.toString().startsWith("EC2")) {
-                    return true;
-                }
-            } catch (InterruptedException e) {
-                // test negative
-            }
-
-        } catch (IOException e) {
-
+        } catch (InterruptedException e) {
+            // test negative
         }
         return false;
     }

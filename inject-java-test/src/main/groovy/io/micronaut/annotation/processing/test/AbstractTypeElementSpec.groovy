@@ -20,10 +20,12 @@ import com.sun.tools.javac.processing.JavacProcessingEnvironment
 import com.sun.tools.javac.util.Context
 import groovy.transform.CompileStatic
 import io.micronaut.annotation.processing.AnnotationUtils
+import io.micronaut.annotation.processing.GenericUtils
 import io.micronaut.annotation.processing.ModelUtils
 import io.micronaut.context.ApplicationContext
 import io.micronaut.context.DefaultApplicationContext
 import io.micronaut.core.annotation.AnnotationMetadata
+import io.micronaut.core.beans.BeanIntrospection
 import io.micronaut.core.io.scan.ClassPathResourceLoader
 import io.micronaut.core.naming.NameUtils
 import io.micronaut.inject.BeanConfiguration
@@ -34,6 +36,8 @@ import io.micronaut.annotation.processing.JavaAnnotationMetadataBuilder
 import io.micronaut.inject.writer.BeanConfigurationWriter
 import spock.lang.Specification
 
+import javax.annotation.Nonnull
+import javax.annotation.Nullable
 import javax.lang.model.element.Element
 import javax.lang.model.element.ExecutableElement
 import javax.lang.model.element.TypeElement
@@ -59,6 +63,54 @@ abstract class AbstractTypeElementSpec extends Specification {
         JavaAnnotationMetadataBuilder builder = newJavaAnnotationBuilder()
         AnnotationMetadata metadata = element != null ? builder.build(element) : null
         return metadata
+    }
+
+    /**
+    * Build and return a {@link BeanIntrospection} for the given class name and class data.
+    *
+    * @return the introspection if it is correct
+    **/
+    protected BeanIntrospection buildBeanIntrospection(String className, String cls) {
+        def beanDefName= '$' + NameUtils.getSimpleName(className) + '$Introspection'
+        def packageName = NameUtils.getPackageName(className)
+        String beanFullName = "${packageName}.${beanDefName}"
+
+        ClassLoader classLoader = buildClassLoader(className, cls)
+        return (BeanIntrospection)classLoader.loadClass(beanFullName).newInstance()
+    }
+
+    /**
+     * @param annotationExpression the annotation expression
+     * @param packages the packages to import
+     * @return The metadata
+     */
+    @CompileStatic
+    AnnotationMetadata buildAnnotationMetadata(String annotationExpression, String... packages) {
+
+        List<String> packageList = ["io.micronaut.core.annotation",
+                                    "io.micronaut.inject.annotation"]
+        packageList.addAll(Arrays.asList(packages))
+        packageList = packageList.unique()
+        return buildTypeAnnotationMetadata("""
+${packageList.collect() { "import ${it}.*;" }.join(System.getProperty('line.separator'))}
+
+${annotationExpression}
+class Test {
+
+}
+""")
+    }
+
+    /**
+     * Reads a generated file
+     * @param filePath The file path
+     * @param className The class name
+     * @param code The code
+     * @return The reader
+     * @throws IOException
+     */
+    public @Nullable Reader readGenerated(@Nonnull String filePath, String className, String code) throws IOException {
+        return newJavaParser().readGenerated(filePath, className, code)
     }
 
     /**
@@ -209,9 +261,10 @@ abstract class AbstractTypeElementSpec extends Specification {
         def env = JavacProcessingEnvironment.instance(new Context())
         def elements = JavacElements.instance(new Context())
         ModelUtils modelUtils = new ModelUtils(elements, env.typeUtils) {}
-        AnnotationUtils annotationUtils = new AnnotationUtils(elements, env.messager, env.typeUtils, modelUtils, env.filer) {
+        GenericUtils genericUtils = new GenericUtils(elements, env.typeUtils, modelUtils) {}
+        AnnotationUtils annotationUtils = new AnnotationUtils(env, elements, env.messager, env.typeUtils, modelUtils, genericUtils, env.filer) {
         }
-        JavaAnnotationMetadataBuilder builder = new JavaAnnotationMetadataBuilder(elements, env.messager, annotationUtils, env.typeUtils, modelUtils, env.filer)
+        JavaAnnotationMetadataBuilder builder = new JavaAnnotationMetadataBuilder(elements, env.messager, annotationUtils, modelUtils)
         return builder
     }
 }

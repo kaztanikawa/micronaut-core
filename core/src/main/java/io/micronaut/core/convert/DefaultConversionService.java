@@ -39,7 +39,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
-import java.lang.annotation.Annotation;
 import java.lang.reflect.Array;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -67,9 +66,13 @@ import java.util.function.Function;
  */
 public class DefaultConversionService implements ConversionService<DefaultConversionService> {
 
-    private static final int CACHE_MAX = 60;
+    private static final int CACHE_MAX = 150;
+    private static final TypeConverter UNCONVERTIBLE = (object, targetType, context) -> Optional.empty();
+
     private final Map<ConvertiblePair, TypeConverter> typeConverters = new ConcurrentHashMap<>();
-    private final Map<ConvertiblePair, TypeConverter> converterCache = new ConcurrentLinkedHashMap.Builder<ConvertiblePair, TypeConverter>().maximumWeightedCapacity(CACHE_MAX).build();
+    private final Map<ConvertiblePair, TypeConverter> converterCache = new ConcurrentLinkedHashMap.Builder<ConvertiblePair, TypeConverter>()
+            .maximumWeightedCapacity(CACHE_MAX)
+            .build();
 
     /**
      * Constructor.
@@ -88,14 +91,14 @@ public class DefaultConversionService implements ConversionService<DefaultConver
             return Optional.of((T) object);
         }
         Class<?> sourceType = object.getClass();
-        targetType = ReflectionUtils.getWrapperType(targetType);
+        targetType = targetType.isPrimitive() ? ReflectionUtils.getWrapperType(targetType) : targetType;
 
         if (targetType.isInstance(object) && !Iterable.class.isInstance(object) && !Map.class.isInstance(object)) {
             return Optional.of((T) object);
         }
 
-        Optional<? extends Class<? extends Annotation>> formattingAnn = context.getAnnotationMetadata().getAnnotationTypeByStereotype(Format.class);
-        Class<? extends Annotation> formattingAnnotation = formattingAnn.orElse(null);
+        Optional<String> formattingAnn = context.getAnnotationMetadata().getAnnotationNameByStereotype(Format.class);
+        String formattingAnnotation = formattingAnn.orElse(null);
         ConvertiblePair pair = new ConvertiblePair(sourceType, targetType, formattingAnnotation);
         TypeConverter typeConverter = converterCache.get(pair);
         if (typeConverter == null) {
@@ -104,9 +107,16 @@ public class DefaultConversionService implements ConversionService<DefaultConver
                 return Optional.empty();
             } else {
                 converterCache.put(pair, typeConverter);
+                if (typeConverter == UNCONVERTIBLE) {
+                    return Optional.empty();
+                } else {
+                    return typeConverter.convert(object, targetType, context);
+                }
             }
+        } else if (typeConverter != UNCONVERTIBLE) {
+            return typeConverter.convert(object, targetType, context);
         }
-        return typeConverter.convert(object, targetType, context);
+        return Optional.empty();
     }
 
     @Override
@@ -117,11 +127,11 @@ public class DefaultConversionService implements ConversionService<DefaultConver
             typeConverter = findTypeConverter(sourceType, targetType, null);
             if (typeConverter != null) {
                 converterCache.put(pair, typeConverter);
-                return true;
+                return typeConverter != UNCONVERTIBLE;
             }
             return false;
         }
-        return true;
+        return typeConverter != UNCONVERTIBLE;
     }
 
     @Override
@@ -360,6 +370,17 @@ public class DefaultConversionService implements ConversionService<DefaultConver
             }
         });
 
+        // String -> BigInteger
+        addConverter(CharSequence.class, BigInteger.class, (CharSequence object, Class<BigInteger> targetType, ConversionContext context) -> {
+            try {
+                BigInteger converted = new BigInteger(object.toString());
+                return Optional.of(converted);
+            } catch (NumberFormatException e) {
+                context.reject(object, e);
+                return Optional.empty();
+            }
+        });
+
         // String -> Float
         addConverter(CharSequence.class, Float.class, (CharSequence object, Class<Float> targetType, ConversionContext context) -> {
             try {
@@ -577,6 +598,12 @@ public class DefaultConversionService implements ConversionService<DefaultConver
                     Enum val = Enum.valueOf(targetType, NameUtils.environmentName(stringValue));
                     return Optional.of(val);
                 } catch (Exception e1) {
+                    Optional<Enum> valOpt = Arrays.stream(targetType.getEnumConstants())
+                            .filter(val -> val.toString().equals(stringValue))
+                            .findFirst();
+                    if (valOpt.isPresent()) {
+                        return valOpt;
+                    }
                     context.reject(object, e);
                     return Optional.empty();
                 }
@@ -637,7 +664,7 @@ public class DefaultConversionService implements ConversionService<DefaultConver
                     list.add(converted.get());
                 }
             }
-            return Optional.of(list);
+            return CollectionUtils.convertCollection((Class) targetType, list);
         });
 
         // Optional handling
@@ -811,8 +838,8 @@ public class DefaultConversionService implements ConversionService<DefaultConver
      * @param <T> Generic type
      * @return type converter
      */
-    protected <T> TypeConverter findTypeConverter(Class<?> sourceType, Class<T> targetType, Class<? extends Annotation> formattingAnnotation) {
-        TypeConverter typeConverter = null;
+    protected <T> TypeConverter findTypeConverter(Class<?> sourceType, Class<T> targetType, String formattingAnnotation) {
+        TypeConverter typeConverter = UNCONVERTIBLE;
         List<Class> sourceHierarchy = ClassUtils.resolveHierarchy(sourceType);
         List<Class> targetHierarchy = ClassUtils.resolveHierarchy(targetType);
         boolean hasFormatting = formattingAnnotation != null;
@@ -843,7 +870,7 @@ public class DefaultConversionService implements ConversionService<DefaultConver
 
     private SimpleDateFormat resolveFormat(ConversionContext context) {
         AnnotationMetadata annotationMetadata = context.getAnnotationMetadata();
-        Optional<String> format = annotationMetadata.getValue(Format.class, String.class);
+        Optional<String> format = annotationMetadata.stringValue(Format.class);
         return format
             .map((pattern) -> new SimpleDateFormat(pattern, context.getLocale()))
             .orElse(new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", context.getLocale()));
@@ -852,7 +879,7 @@ public class DefaultConversionService implements ConversionService<DefaultConver
     private <S, T> ConvertiblePair newPair(Class<S> sourceType, Class<T> targetType, TypeConverter<S, T> typeConverter) {
         ConvertiblePair pair;
         if (typeConverter instanceof FormattingTypeConverter) {
-            pair = new ConvertiblePair(sourceType, targetType, ((FormattingTypeConverter) typeConverter).annotationType());
+            pair = new ConvertiblePair(sourceType, targetType, ((FormattingTypeConverter) typeConverter).annotationType().getName());
         } else {
             pair = new ConvertiblePair(sourceType, targetType);
         }
@@ -862,16 +889,16 @@ public class DefaultConversionService implements ConversionService<DefaultConver
     /**
      * Binds the source and target.
      */
-    private class ConvertiblePair {
+    private final class ConvertiblePair {
         final Class source;
         final Class target;
-        final Class<? extends Annotation> formattingAnnotation;
+        final String formattingAnnotation;
 
         ConvertiblePair(Class source, Class target) {
             this(source, target, null);
         }
 
-        public ConvertiblePair(Class source, Class target, Class<? extends Annotation> formattingAnnotation) {
+        ConvertiblePair(Class source, Class target, String formattingAnnotation) {
             this.source = source;
             this.target = target;
             this.formattingAnnotation = formattingAnnotation;

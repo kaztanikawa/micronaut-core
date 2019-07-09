@@ -15,6 +15,8 @@
  */
 package io.micronaut.http.client
 
+import io.micronaut.context.env.Environment
+import io.micronaut.core.io.socket.SocketUtils
 import io.reactivex.Flowable
 import io.micronaut.context.ApplicationContext
 import io.micronaut.http.HttpRequest
@@ -29,13 +31,19 @@ import spock.lang.Specification
 class SslSelfSignedSpec extends Specification {
 
     @Shared
+    String host = Optional.ofNullable(System.getenv(Environment.HOSTNAME)).orElse(SocketUtils.LOCALHOST)
+
+    @Shared
+    int port = SocketUtils.findAvailableTcpPort()
+
+    @Shared
     @AutoCleanup
     ApplicationContext context = ApplicationContext.run([
             'micronaut.ssl.enabled': true,
-            'micronaut.ssl.buildSelfSigned': true
+            'micronaut.ssl.buildSelfSigned': true,
+            'micronaut.ssl.port': port
     ])
 
-    @AutoCleanup
     @Shared
     EmbeddedServer embeddedServer = context.getBean(EmbeddedServer).start()
 
@@ -45,7 +53,7 @@ class SslSelfSignedSpec extends Specification {
 
     void "expect the url to be https"() {
         expect:
-        embeddedServer.getURL().toString() == "https://localhost:8443"
+        embeddedServer.getURL().toString() == "https://${host}:${port}"
     }
 
     void "test send https request"() {

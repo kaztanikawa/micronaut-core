@@ -22,7 +22,7 @@ import io.micronaut.inject.ast.FieldElement;
 import org.codehaus.groovy.ast.*;
 import org.codehaus.groovy.control.SourceUnit;
 
-import javax.annotation.Nullable;
+import javax.annotation.Nonnull;
 import java.lang.reflect.Modifier;
 
 /**
@@ -46,7 +46,7 @@ public class GroovyFieldElement extends AbstractGroovyElement implements FieldEl
     GroovyFieldElement(
             SourceUnit sourceUnit,
             Variable variable, AnnotatedNode annotatedNode, AnnotationMetadata annotationMetadata) {
-        super(annotatedNode, annotationMetadata);
+        super(sourceUnit, annotatedNode, annotationMetadata);
         this.variable = variable;
         this.sourceUnit = sourceUnit;
     }
@@ -91,7 +91,7 @@ public class GroovyFieldElement extends AbstractGroovyElement implements FieldEl
         return variable;
     }
 
-    @Nullable
+    @Nonnull
     @Override
     public ClassElement getType() {
         return new GroovyClassElement(sourceUnit, variable.getType(), AstAnnotationUtils.getAnnotationMetadata(sourceUnit, variable.getType()));

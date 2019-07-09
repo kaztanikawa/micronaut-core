@@ -2,6 +2,7 @@ dependencies {
     compile project(":router")
     compile project(":runtime")
     compileOnly project(":inject-java")
+    compileOnly project(":graal")
 
     testCompile project(":http-client")
     testCompile project(":inject-groovy")
@@ -13,4 +14,5 @@ dependencies {
 
     compileOnly "ch.qos.logback:logback-classic:1.2.3"
 }
+
 //compileTestGroovy.groovyOptions.forkOptions.jvmArgs = ['-Xdebug', '-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005']

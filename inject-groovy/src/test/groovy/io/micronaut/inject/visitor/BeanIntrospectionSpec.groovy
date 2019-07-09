@@ -257,8 +257,6 @@ class Test {
         bi.getConstructorArguments().length == 3
         bi.getConstructorArguments()[0].name == 'name'
         bi.getConstructorArguments()[0].type == String
-        bi.getIndexedProperties(Id).size() == 1
-        bi.getIndexedProperties(Id).first().name == 'id'
 
 
         when:
@@ -280,6 +278,7 @@ package test;
 import io.micronaut.core.annotation.*;
 import javax.validation.constraints.*;
 import java.util.*;
+import io.micronaut.core.convert.TypeConverter;
 
 @Introspected
 class Test extends ParentBean {
@@ -292,7 +291,12 @@ class Test extends ParentBean {
     private String[] stringArray;
     private int[] primitiveArray;
     private boolean flag;
+    private TypeConverter<String, Collection> genericsTest;
     
+    public TypeConverter<String, Collection> getGenericsTest() {
+        return genericsTest;
+    }
+        
     public String getReadOnly() {
         return readOnly;
     }
@@ -372,7 +376,7 @@ class ParentBean {
         introspection != null
         introspection.hasAnnotation(Introspected)
         introspection.instantiate().getClass().name == 'test.Test'
-        introspection.getBeanProperties().size() == 8
+        introspection.getBeanProperties().size() == 9
         introspection.getProperty("name").isPresent()
         introspection.getProperty("name", String).isPresent()
         !introspection.getProperty("name", Integer).isPresent()

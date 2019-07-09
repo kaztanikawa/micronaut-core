@@ -17,6 +17,8 @@ package io.micronaut.aop.proxytarget;
 
 import io.micronaut.aop.simple.*;
 
+import javax.annotation.PostConstruct;
+import javax.inject.Singleton;
 import java.util.Collections;
 import java.util.List;
 
@@ -24,15 +26,23 @@ import java.util.List;
  * @author Graeme Rocher
  * @since 1.0
  */
+@Singleton
 public class ProxyingClass<A extends CharSequence> {
+
 
     private Bar bar;
 
+    public int lifeCycleCount = 0;
     public int invocationCount = 0;
 
     public <T extends Bar> ProxyingClass(T bar) {
         this.bar = bar;
         assert bar != null;
+    }
+
+    @PostConstruct
+    void init() {
+        lifeCycleCount++;
     }
 
     @Mutating("name")

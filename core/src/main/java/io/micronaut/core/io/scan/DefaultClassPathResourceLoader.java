@@ -155,7 +155,7 @@ public class DefaultClassPathResourceLoader implements ClassPathResourceLoader {
                 try {
                     URI uri = url.toURI();
                     Path pathObject;
-                    synchronized (this) {
+                    synchronized (DefaultClassPathResourceLoader.class) {
 
                         if (uri.getScheme().equals("jar")) {
                             FileSystem fileSystem = null;
@@ -163,6 +163,9 @@ public class DefaultClassPathResourceLoader implements ClassPathResourceLoader {
                                 try {
                                     fileSystem = FileSystems.getFileSystem(uri);
                                 } catch (FileSystemNotFoundException e) {
+                                    //no-op
+                                }
+                                if (fileSystem == null || !fileSystem.isOpen()) {
                                     fileSystem = FileSystems.newFileSystem(uri, Collections.emptyMap(), classLoader);
                                 }
 

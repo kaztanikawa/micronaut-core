@@ -16,10 +16,11 @@
 package io.micronaut.multitenancy.tenantresolver;
 
 import io.micronaut.context.annotation.Requires;
+import io.micronaut.core.util.StringUtils;
+import io.micronaut.http.HttpAttributes;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.context.ServerRequestContext;
 import io.micronaut.multitenancy.exceptions.TenantNotFoundException;
-import io.micronaut.security.filters.SecurityFilter;
 
 import javax.inject.Singleton;
 import java.io.Serializable;
@@ -30,10 +31,10 @@ import java.util.Optional;
  * A tenant resolver that resolves the tenant from the authenticated principal.
  *
  * @author Sergio del Amo
- * @since 6.0
+ * @since 1.0.0
  */
 @Singleton
-@Requires(property = PrincipalTenantResolverConfigurationProperties.PREFIX + ".enabled")
+@Requires(property = PrincipalTenantResolverConfigurationProperties.PREFIX + ".enabled", value = StringUtils.TRUE, defaultValue = StringUtils.FALSE)
 public class PrincipalTenantResolver implements TenantResolver {
 
     @Override
@@ -51,7 +52,7 @@ public class PrincipalTenantResolver implements TenantResolver {
     protected Serializable resolveTenantIdentifierAtRequest(HttpRequest<Object> request) throws TenantNotFoundException {
         return request.getUserPrincipal().map(Principal::getName)
                       .orElseThrow(() ->
-                              new TenantNotFoundException("Tenant could not be resolved because " + SecurityFilter.AUTHENTICATION + " attribute was not found")
+                              new TenantNotFoundException("Tenant could not be resolved because " + HttpAttributes.PRINCIPAL + " attribute was not found")
                       );
     }
 }

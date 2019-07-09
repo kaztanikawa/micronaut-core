@@ -46,7 +46,6 @@ class BlockingCrudSpec extends Specification {
     ApplicationContext context = ApplicationContext.run()
 
     @Shared
-    @AutoCleanup
     EmbeddedServer embeddedServer = context.getBean(EmbeddedServer).start()
 
     void "test configured client"() {
@@ -100,6 +99,12 @@ class BlockingCrudSpec extends Specification {
         bookAndResponse.status() == HttpStatus.OK
         bookAndResponse.body().title == "The Stand"
 
+        when:'the full response returns 404'
+        bookAndResponse = client.getResponse(-1)
+
+        then:
+        noExceptionThrown()
+        bookAndResponse.status() == HttpStatus.NOT_FOUND
 
         when:
         book = client.update(book.id, "The Shining")
@@ -161,6 +166,17 @@ class BlockingCrudSpec extends Specification {
 
         then:
         thrown(IllegalArgumentException)
+    }
+
+    void "test a declarative client void method and 404 response"() {
+        given:
+        VoidNotFoundClient client = context.getBean(VoidNotFoundClient)
+
+        when:
+        client.call()
+
+        then:
+        noExceptionThrown()
     }
 
     @Client('/blocking/books')
@@ -252,4 +268,12 @@ class BlockingCrudSpec extends Specification {
         Long id
         String title
     }
+
+    @Client("/void/404")
+    static interface VoidNotFoundClient {
+
+        @Get
+        void call()
+    }
+
 }

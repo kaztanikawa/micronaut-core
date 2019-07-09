@@ -154,6 +154,32 @@ public class CollectionUtils {
         return set;
     }
 
+
+    /**
+     * Convert an {@link Enumeration} to a {@link Iterable}.
+     *
+     * @param enumeration The iterator
+     * @param <T>         The type
+     * @return The set
+     */
+    public static @Nonnull <T> Iterable<T> enumerationToIterable(@Nullable Enumeration<T> enumeration) {
+        if (enumeration == null) {
+            return Collections.emptyList();
+        }
+
+        return () -> new Iterator<T>() {
+            @Override
+            public boolean hasNext() {
+                return enumeration.hasMoreElements();
+            }
+
+            @Override
+            public T next() {
+                return enumeration.nextElement();
+            }
+        };
+    }
+
     /**
      * Creates a set of the given objects.
      *

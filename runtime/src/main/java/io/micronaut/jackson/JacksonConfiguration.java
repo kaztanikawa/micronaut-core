@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.type.TypeFactory;
 import io.micronaut.context.annotation.ConfigurationProperties;
 import io.micronaut.core.annotation.Experimental;
+import io.micronaut.core.annotation.TypeHint;
 import io.micronaut.core.type.Argument;
 import io.micronaut.core.util.ArgumentUtils;
 import io.micronaut.core.util.ArrayUtils;
@@ -37,6 +38,13 @@ import java.util.*;
  * @since 1.0
  */
 @ConfigurationProperties("jackson")
+@TypeHint(
+        value = {
+                PropertyNamingStrategy.UpperCamelCaseStrategy.class,
+                ArrayList.class,
+                LinkedHashMap.class,
+                HashSet.class
+        })
 public class JacksonConfiguration {
 
     /**
@@ -65,6 +73,7 @@ public class JacksonConfiguration {
     private Map<JsonParser.Feature, Boolean> parser = Collections.emptyMap();
     private Map<JsonGenerator.Feature, Boolean> generator = Collections.emptyMap();
     private JsonInclude.Include serializationInclusion = JsonInclude.Include.NON_EMPTY;
+    private ObjectMapper.DefaultTyping defaultTyping = null;
     private PropertyNamingStrategy propertyNamingStrategy = null;
 
     /**
@@ -108,6 +117,13 @@ public class JacksonConfiguration {
      */
     public JsonInclude.Include getSerializationInclusion() {
         return serializationInclusion;
+    }
+
+    /**
+     * @return The global defaultTyping using for Polymorphic handling
+     */
+    public ObjectMapper.DefaultTyping getDefaultTyping() {
+        return defaultTyping;
     }
 
     /**
@@ -271,6 +287,15 @@ public class JacksonConfiguration {
         if (serializationInclusion != null) {
             this.serializationInclusion = serializationInclusion;
         }
+    }
+
+    /**
+     * Sets the global defaultTyping using for Polymorphic handling.
+     *
+     * @param defaultTyping The defaultTyping
+     */
+    public void setDefaultTyping(ObjectMapper.DefaultTyping defaultTyping) {
+        this.defaultTyping = defaultTyping;
     }
 
     /**

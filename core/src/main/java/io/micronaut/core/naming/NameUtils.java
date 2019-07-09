@@ -40,6 +40,9 @@ public class NameUtils {
     private static final Pattern SERVICE_ID_REGEX = Pattern.compile("[\\p{javaLowerCase}\\d-]+");
     private static final String PREFIX_GET = "get";
     private static final String PREFIX_SET = "set";
+    private static final Pattern ENVIRONMENT_VAR_SEQUENCE = Pattern.compile("^[\\p{Lu}_{0-9}]+");
+    private static final Pattern KEBAB_CASE_SEQUENCE = Pattern.compile("^(([a-z0-9])+(\\-|\\.|:)?)*([a-z0-9])+$");
+
 
     /**
      * Checks whether the given name is a valid service identifier.
@@ -442,8 +445,7 @@ public class NameUtils {
     }
 
     /**
-     * .
-     * The camel case version of the string with the first letter in lower case
+     * The camel case version of the string with the first letter in lower case.
      *
      * @param str                  The string
      * @param lowerCaseFirstLetter Whether the first letter is in upper case or lower case
@@ -475,6 +477,26 @@ public class NameUtils {
             return "";
         }
         return path.substring(lastSeparator + 1, index);
+    }
+
+    /**
+     * Checks whether the string is a valid hyphenated (kebab-case) property name.
+     *
+     * @param str The string to check
+     * @return Whether is valid kebab-case or not
+     */
+    public static boolean isValidHyphenatedPropertyName(String str) {
+        return KEBAB_CASE_SEQUENCE.matcher(str).matches();
+    }
+
+    /**
+     * Checks whether the string is a valid environment-style property name.
+     *
+     * @param str The string to check
+     * @return Whether is valid environment-style property name or not
+     */
+    public static boolean isEnvironmentName(String str) {
+        return ENVIRONMENT_VAR_SEQUENCE.matcher(str).matches();
     }
 
 }

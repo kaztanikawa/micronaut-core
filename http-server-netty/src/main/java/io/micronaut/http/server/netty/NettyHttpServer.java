@@ -15,12 +15,11 @@
  */
 package io.micronaut.http.server.netty;
 
-import io.micronaut.core.annotation.Internal;
-import io.micronaut.http.netty.stream.HttpStreamsServerHandler;
 import io.micronaut.context.ApplicationContext;
 import io.micronaut.context.BeanLocator;
 import io.micronaut.context.env.Environment;
 import io.micronaut.context.exceptions.ConfigurationException;
+import io.micronaut.core.annotation.Internal;
 import io.micronaut.core.io.socket.SocketUtils;
 import io.micronaut.core.naming.Named;
 import io.micronaut.core.order.OrderUtil;
@@ -30,6 +29,7 @@ import io.micronaut.discovery.event.ServiceShutdownEvent;
 import io.micronaut.discovery.event.ServiceStartedEvent;
 import io.micronaut.http.codec.MediaTypeCodecRegistry;
 import io.micronaut.http.netty.channel.NettyThreadFactory;
+import io.micronaut.http.netty.stream.HttpStreamsServerHandler;
 import io.micronaut.http.netty.websocket.WebSocketSessionRepository;
 import io.micronaut.http.server.HttpServerConfiguration;
 import io.micronaut.http.server.binding.RequestArgumentSatisfier;
@@ -37,7 +37,7 @@ import io.micronaut.http.server.exceptions.ServerStartupException;
 import io.micronaut.http.server.netty.configuration.NettyHttpServerConfiguration;
 import io.micronaut.http.server.netty.decoders.HttpRequestDecoder;
 import io.micronaut.http.server.netty.encoders.HttpResponseEncoder;
-import io.micronaut.http.server.netty.ssl.NettyServerSslBuilder;
+import io.micronaut.http.server.netty.ssl.ServerSslBuilder;
 import io.micronaut.http.server.netty.types.NettyCustomizableResponseTypeHandlerRegistry;
 import io.micronaut.http.server.netty.websocket.NettyServerWebSocketUpgradeHandler;
 import io.micronaut.http.ssl.ServerSslConfiguration;
@@ -53,20 +53,13 @@ import io.micronaut.web.router.Router;
 import io.micronaut.web.router.resource.StaticResourceResolver;
 import io.micronaut.websocket.context.WebSocketBeanRegistry;
 import io.netty.bootstrap.ServerBootstrap;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelHandler;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelOption;
-import io.netty.channel.ChannelOutboundHandler;
-import io.netty.channel.ChannelPipeline;
+import io.netty.channel.*;
 import io.netty.channel.group.ChannelGroup;
 import io.netty.channel.group.DefaultChannelGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.handler.codec.http.HttpContentDecompressor;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpServerKeepAliveHandler;
 import io.netty.handler.codec.http.multipart.DiskFileUpload;
-import io.netty.handler.flow.FlowControlHandler;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.stream.ChunkedWriteHandler;
@@ -81,11 +74,7 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.io.File;
 import java.lang.reflect.Field;
-import java.net.BindException;
-import java.net.MalformedURLException;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URL;
+import java.net.*;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -113,6 +102,8 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
     @SuppressWarnings("WeakerAccess")
     public static final String HTTP_COMPRESSOR = "http-compressor";
     @SuppressWarnings("WeakerAccess")
+    public static final String HTTP_DECOMPRESSOR = "http-decompressor";
+    @SuppressWarnings("WeakerAccess")
     public static final String HTTP_KEEP_ALIVE_HANDLER = "http-keep-alive-handler";
     @SuppressWarnings("WeakerAccess")
     public static final String MICRONAUT_HANDLER = "micronaut-inbound-handler";
@@ -136,14 +127,16 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
     private final ThreadFactory threadFactory;
     private final WebSocketBeanRegistry webSocketBeanRegistry;
     private final int specifiedPort;
+    private final HttpCompressionStrategy httpCompressionStrategy;
     private volatile int serverPort;
     private final ApplicationContext applicationContext;
     private final SslContext sslContext;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final ChannelGroup webSocketSessions = new DefaultChannelGroup(GlobalEventExecutor.INSTANCE);
-    private NioEventLoopGroup workerGroup;
-    private NioEventLoopGroup parentGroup;
+    private EventLoopGroup workerGroup;
+    private EventLoopGroup parentGroup;
     private EmbeddedServerInstance serviceInstance;
+    private EventLoopGroupFactory eventLoopGroupFactory;
 
     /**
      * @param serverConfiguration                     The Netty HTTP server configuration
@@ -156,8 +149,10 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
      * @param ioExecutor                              The IO executor
      * @param threadFactory                           The thread factory
      * @param executorSelector                        The executor selector
-     * @param nettyServerSslBuilder                   The Netty Server SSL builder
+     * @param serverSslBuilder                        The Netty Server SSL builder
      * @param outboundHandlers                        The outbound handlers
+     * @param eventLoopGroupFactory                   The EventLoopGroupFactory
+     * @param httpCompressionStrategy                 The http compression strategy
      */
     @SuppressWarnings("ParameterNumber")
     @Inject
@@ -172,9 +167,12 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
         @javax.inject.Named(TaskExecutors.IO) ExecutorService ioExecutor,
         @javax.inject.Named(NettyThreadFactory.NAME) ThreadFactory threadFactory,
         ExecutorSelector executorSelector,
-        NettyServerSslBuilder nettyServerSslBuilder,
-        List<ChannelOutboundHandler> outboundHandlers
+        Optional<ServerSslBuilder> serverSslBuilder,
+        List<ChannelOutboundHandler> outboundHandlers,
+        EventLoopGroupFactory eventLoopGroupFactory,
+        HttpCompressionStrategy httpCompressionStrategy
     ) {
+        this.httpCompressionStrategy = httpCompressionStrategy;
         Optional<File> location = serverConfiguration.getMultipart().getLocation();
         location.ifPresent(dir -> DiskFileUpload.baseDirectory = dir.getAbsolutePath());
         this.applicationContext = applicationContext;
@@ -183,7 +181,6 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
         this.beanLocator = applicationContext;
         this.environment = applicationContext.getEnvironment();
         this.serverConfiguration = serverConfiguration;
-        this.sslConfiguration = nettyServerSslBuilder.getSslConfiguration();
         this.router = router;
         this.ioExecutor = ioExecutor;
         Optional<Integer> configPort = serverConfiguration.getPort();
@@ -197,16 +194,33 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
             }
         }
 
-        int port = sslConfiguration.isEnabled() ? sslConfiguration.getPort() : specifiedPort;
+        int port = specifiedPort;
+        if (serverSslBuilder.isPresent()) {
+            ServerSslBuilder sslBuilder = serverSslBuilder.get();
+            this.sslConfiguration = sslBuilder.getSslConfiguration();
+            this.sslContext = sslBuilder.build().orElse(null);
+            if (this.sslConfiguration.isEnabled()) {
+                port = sslConfiguration.getPort();
+            }
+        } else {
+            this.sslConfiguration = null;
+            this.sslContext = null;
+        }
+
         this.serverPort = port == -1 ? SocketUtils.findAvailableTcpPort() : port;
         this.executorSelector = executorSelector;
         OrderUtil.sort(outboundHandlers);
         this.outboundHandlers = outboundHandlers;
         this.requestArgumentSatisfier = requestArgumentSatisfier;
         this.staticResourceResolver = resourceResolver;
-        this.sslContext = nettyServerSslBuilder.build().orElse(null);
         this.threadFactory = threadFactory;
         this.webSocketBeanRegistry = WebSocketBeanRegistry.forServer(applicationContext);
+        this.eventLoopGroupFactory = eventLoopGroupFactory;
+    }
+
+    @Override
+    public boolean isKeepAlive() {
+        return false;
     }
 
     /**
@@ -231,10 +245,24 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
 
             processOptions(serverConfiguration.getOptions(), serverBootstrap::option);
             processOptions(serverConfiguration.getChildOptions(), serverBootstrap::childOption);
-
             serverBootstrap = serverBootstrap.group(parentGroup, workerGroup)
-                .channel(NioServerSocketChannel.class)
+                .channel(eventLoopGroupFactory.serverSocketChannelClass())
                 .childHandler(new ChannelInitializer() {
+                    final HttpRequestDecoder requestDecoder = new HttpRequestDecoder(NettyHttpServer.this, environment, serverConfiguration);
+                    final HttpResponseEncoder responseDecoder = new HttpResponseEncoder(mediaTypeCodecRegistry, serverConfiguration);
+                    final RoutingInBoundHandler routingHandler = new RoutingInBoundHandler(
+                        beanLocator,
+                        router,
+                        mediaTypeCodecRegistry,
+                        customizableResponseTypeHandlerRegistry,
+                        staticResourceResolver,
+                        serverConfiguration,
+                        requestArgumentSatisfier,
+                        executorSelector,
+                        ioExecutor
+                    );
+                    final LoggingHandler loggingHandler = serverConfiguration.getLogLevel().isPresent() ? new LoggingHandler(serverConfiguration.getLogLevel().get()) : null;
+
                     @Override
                     protected void initChannel(Channel ch) {
                         ChannelPipeline pipeline = ch.pipeline();
@@ -243,9 +271,9 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
                             pipeline.addLast(sslContext.newHandler(ch.alloc()));
                         }
 
-                        serverConfiguration.getLogLevel().ifPresent(logLevel ->
-                                pipeline.addLast(new LoggingHandler(logLevel))
-                        );
+                        if (loggingHandler != null) {
+                            pipeline.addLast(loggingHandler);
+                        }
 
                         final Duration idleTime = serverConfiguration.getIdleTimeout();
                         if (!idleTime.isNegative()) {
@@ -265,15 +293,12 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
 
                         pipeline.addLast(new FlowControlHandler());
                         pipeline.addLast(HTTP_KEEP_ALIVE_HANDLER, new HttpServerKeepAliveHandler());
-                        pipeline.addLast(HTTP_COMPRESSOR, new SmartHttpContentCompressor(serverConfiguration.getCompressionThreshold()));
+                        pipeline.addLast(HTTP_COMPRESSOR, new SmartHttpContentCompressor(httpCompressionStrategy));
+                        pipeline.addLast(HTTP_DECOMPRESSOR, new HttpContentDecompressor());
                         pipeline.addLast(HTTP_STREAMS_CODEC, new HttpStreamsServerHandler());
                         pipeline.addLast(HTTP_CHUNKED_HANDLER, new ChunkedWriteHandler());
-                        pipeline.addLast(HttpRequestDecoder.ID, new HttpRequestDecoder(
-                                NettyHttpServer.this,
-                                environment,
-                                serverConfiguration
-                        ));
-                        pipeline.addLast(HttpResponseEncoder.ID, new HttpResponseEncoder(mediaTypeCodecRegistry, serverConfiguration));
+                        pipeline.addLast(HttpRequestDecoder.ID, requestDecoder);
+                        pipeline.addLast(HttpResponseEncoder.ID, responseDecoder);
                         pipeline.addLast(NettyServerWebSocketUpgradeHandler.ID, new NettyServerWebSocketUpgradeHandler(
                                 getWebSocketSessionRepository(),
                                 router,
@@ -282,17 +307,7 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
                                 mediaTypeCodecRegistry,
                                 applicationContext
                         ));
-                        pipeline.addLast(MICRONAUT_HANDLER, new RoutingInBoundHandler(
-                            beanLocator,
-                            router,
-                            mediaTypeCodecRegistry,
-                            customizableResponseTypeHandlerRegistry,
-                            staticResourceResolver,
-                            serverConfiguration,
-                            requestArgumentSatisfier,
-                            executorSelector,
-                            ioExecutor
-                        ));
+                        pipeline.addLast(MICRONAUT_HANDLER, routingHandler);
                         registerMicronautChannelHandlers(pipeline);
                     }
                 });
@@ -329,7 +344,7 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
 
     @Override
     public String getScheme() {
-        return sslConfiguration.isEnabled() ? "https" : "http";
+        return (sslConfiguration != null && sslConfiguration.isEnabled()) ? "https" : "http";
     }
 
     @Override
@@ -364,7 +379,7 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
      * @return The parent event loop group
      */
     @SuppressWarnings("WeakerAccess")
-    protected NioEventLoopGroup createParentEventLoopGroup() {
+    protected EventLoopGroup createParentEventLoopGroup() {
         return newEventLoopGroup(serverConfiguration.getParent());
     }
 
@@ -372,7 +387,7 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
      * @return The worker event loop group
      */
     @SuppressWarnings("WeakerAccess")
-    protected NioEventLoopGroup createWorkerEventLoopGroup() {
+    protected EventLoopGroup createWorkerEventLoopGroup() {
         return newEventLoopGroup(serverConfiguration.getWorker());
     }
 
@@ -462,25 +477,25 @@ public class NettyHttpServer implements EmbeddedServer, WebSocketSessionReposito
         }
     }
 
-    private NioEventLoopGroup newEventLoopGroup(NettyHttpServerConfiguration.EventLoopConfig config) {
+    private EventLoopGroup newEventLoopGroup(NettyHttpServerConfiguration.EventLoopConfig config) {
         if (config != null) {
             Optional<ExecutorService> executorService = config.getExecutorName().flatMap(name -> beanLocator.findBean(ExecutorService.class, Qualifiers.byName(name)));
-            NioEventLoopGroup group = executorService.map(service ->
-                new NioEventLoopGroup(config.getNumOfThreads(), service)
+            int threads = config.getNumOfThreads();
+            Integer ioRatio = config.getIoRatio().orElse(null);
+            return executorService.map(service ->
+                eventLoopGroupFactory.createEventLoopGroup(threads, service, ioRatio)
             ).orElseGet(() -> {
                 if (threadFactory != null) {
-                    return new NioEventLoopGroup(config.getNumOfThreads(), threadFactory);
+                    return eventLoopGroupFactory.createEventLoopGroup(threads, threadFactory, ioRatio);
                 } else {
-                    return new NioEventLoopGroup(config.getNumOfThreads());
+                    return eventLoopGroupFactory.createEventLoopGroup(threads, ioRatio);
                 }
             });
-            config.getIoRatio().ifPresent(group::setIoRatio);
-            return group;
         } else {
             if (threadFactory != null) {
-                return new NioEventLoopGroup(NettyThreadFactory.DEFAULT_EVENT_LOOP_THREADS, threadFactory);
+                return eventLoopGroupFactory.createEventLoopGroup(NettyThreadFactory.DEFAULT_EVENT_LOOP_THREADS, threadFactory, null);
             } else {
-                return new NioEventLoopGroup();
+                return eventLoopGroupFactory.createEventLoopGroup(null);
             }
         }
     }

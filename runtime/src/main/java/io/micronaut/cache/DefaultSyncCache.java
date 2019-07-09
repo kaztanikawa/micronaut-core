@@ -15,16 +15,24 @@
  */
 package io.micronaut.cache;
 
+import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Policy;
 import com.github.benmanes.caffeine.cache.Weigher;
+import com.github.benmanes.caffeine.cache.stats.CacheStats;
 import io.micronaut.context.ApplicationContext;
 import io.micronaut.context.annotation.EachBean;
 import io.micronaut.core.convert.ConversionContext;
 import io.micronaut.core.convert.ConversionService;
 import io.micronaut.core.type.Argument;
 import io.micronaut.inject.qualifiers.Qualifiers;
+import io.reactivex.Flowable;
+import org.reactivestreams.Publisher;
 
+import javax.annotation.Nonnull;
 import javax.inject.Inject;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -38,7 +46,7 @@ import java.util.function.Supplier;
  * @author Graeme Rocher
  * @since 1.0
  */
-@EachBean(DefaultCacheConfiguration.class)
+@EachBean(CacheConfiguration.class)
 public class DefaultSyncCache implements SyncCache<com.github.benmanes.caffeine.cache.Cache> {
 
     private final CacheConfiguration cacheConfiguration;
@@ -53,7 +61,7 @@ public class DefaultSyncCache implements SyncCache<com.github.benmanes.caffeine.
      * @param applicationContext The application context
      * @param conversionService To convert the value from the cache into given required type
      */
-    @Inject public DefaultSyncCache(
+    public DefaultSyncCache(
             DefaultCacheConfiguration cacheConfiguration,
             ApplicationContext applicationContext,
             ConversionService<?> conversionService) {
@@ -67,6 +75,7 @@ public class DefaultSyncCache implements SyncCache<com.github.benmanes.caffeine.
      * @param applicationContext The application context
      * @param conversionService To convert the value from the cache into given required type
      */
+    @Inject
     public DefaultSyncCache(
             CacheConfiguration cacheConfiguration,
             ApplicationContext applicationContext,
@@ -75,6 +84,26 @@ public class DefaultSyncCache implements SyncCache<com.github.benmanes.caffeine.
         this.applicationContext = applicationContext;
         this.conversionService = conversionService;
         this.cache = buildCache(cacheConfiguration);
+    }
+
+    @Override
+    public Publisher<CacheInfo> getCacheInfo() {
+        return Flowable.just(new CacheInfo() {
+            @Nonnull
+            @Override
+            public String getName() {
+                return cacheConfiguration.getCacheName();
+            }
+
+            @Nonnull
+            @Override
+            public Map<String, Object> get() {
+                Map<String, Object> data = new LinkedHashMap<>(2);
+                data.put("implementationClass", getNativeCache().getClass().getName());
+                data.put("caffeine", getCaffeineCacheData(cache));
+                return data;
+            }
+        });
     }
 
     @Override
@@ -166,5 +195,52 @@ public class DefaultSyncCache implements SyncCache<com.github.benmanes.caffeine.
         return applicationContext.findBean(Weigher.class, Qualifiers.byName(cacheConfiguration.getCacheName()))
                 .orElseGet(() -> applicationContext.findBean(Weigher.class)
                         .orElse(Weigher.singletonWeigher()));
+    }
+
+    private Map<String, Object> getCaffeineCacheData(Cache caffeineCache) {
+
+        Policy policy = caffeineCache.policy();
+        Optional<Policy.Eviction> eviction = policy.eviction();
+        Policy.Expiration expireAfterAccess = (Policy.Expiration) policy.expireAfterAccess().orElse(null);
+        Policy.Expiration expireAfterWrite = (Policy.Expiration) policy.expireAfterWrite().orElse(null);
+        Long maximumSize = eviction.filter(e -> !e.isWeighted()).map(e -> e.getMaximum()).orElse(null);
+        Long maximumWeight = eviction.filter(e -> e.isWeighted()).map(e -> e.getMaximum()).orElse(null);
+        Long weightedSize = eviction.flatMap(e -> e.weightedSize().isPresent() ? Optional.of(e.weightedSize().getAsLong()) : Optional.empty()).orElse(null);
+        boolean isRecordingStats = policy.isRecordingStats();
+
+        Map<String, Object> values = new LinkedHashMap<>(8);
+
+        values.put("estimatedSize", caffeineCache.estimatedSize());
+        values.put("maximumSize", maximumSize);
+        values.put("maximumWeight", maximumWeight);
+        values.put("weightedSize", weightedSize);
+        values.put("expireAfterAccess", getExpiresAfter(expireAfterAccess));
+        values.put("expireAfterWrite", getExpiresAfter(expireAfterWrite));
+        values.put("recordingStats", isRecordingStats);
+
+        if (isRecordingStats) {
+            values.put("stats", getStatsData(caffeineCache.stats()));
+        }
+
+        return values;
+    }
+
+    private Long getExpiresAfter(Policy.Expiration expiration) {
+        return expiration != null ? expiration.getExpiresAfter(TimeUnit.MILLISECONDS) : null;
+    }
+
+    private Map<String, Object> getStatsData(CacheStats stats) {
+
+        Map<String, Object> values = new LinkedHashMap<>(13);
+
+        values.put("requestCount", stats.requestCount());
+        values.put("hitCount", stats.hitCount());
+        values.put("hitRate", stats.hitRate());
+        values.put("missCount", stats.missCount());
+        values.put("missRate", stats.missRate());
+        values.put("evictionCount", stats.evictionCount());
+        values.put("evictionWeight", stats.evictionWeight());
+
+        return values;
     }
 }

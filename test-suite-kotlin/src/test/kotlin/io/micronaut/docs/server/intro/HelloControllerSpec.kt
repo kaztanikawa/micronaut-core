@@ -15,22 +15,32 @@
  */
 package io.micronaut.docs.server.intro
 
-import io.micronaut.context.ApplicationContext
-import io.micronaut.context.env.Environment
+// tag::imports[]
+import io.micronaut.context.annotation.Property
 import io.micronaut.http.client.HttpClient
+import io.micronaut.http.client.annotation.Client
 import io.micronaut.runtime.server.EmbeddedServer
-import junit.framework.TestCase
+import io.micronaut.test.annotation.MicronautTest
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
+import javax.inject.Inject
+// end::imports[]
+@Property(name = "spec.name", value = "HelloControllerSpec")
+// tag::class[]
+@MicronautTest
+class HelloControllerSpec {
+    @Inject
+    lateinit var server: EmbeddedServer // <1>
 
-class HelloControllerSpec : TestCase() {
+    @Inject
+    @field:Client("/")
+    lateinit var client: HttpClient // <2>
 
-    fun testNullableFieldInjection() {
-        val embeddedServer:EmbeddedServer= ApplicationContext.run(EmbeddedServer::class.java,
-                mapOf("spec.name" to "HelloControllerSpec"),
-                Environment.TEST)
-        val client : HttpClient = HttpClient.create(embeddedServer.url)
-        val rsp : String = client.toBlocking().retrieve("/hello")
-        assertEquals("Hello World", rsp)
-        client.close()
-        embeddedServer.close()
+    @Test
+    fun testHelloWorldResponse() {
+        val rsp: String = client.toBlocking() // <3>
+                .retrieve("/hello")
+        assertEquals("Hello World", rsp) // <4>
     }
 }
+//end::class[]

@@ -16,7 +16,6 @@
 package io.micronaut.core.io.service;
 
 import io.micronaut.core.annotation.Internal;
-import io.micronaut.core.reflect.InstantiationUtils;
 
 import java.util.Optional;
 import java.util.ServiceConfigurationError;
@@ -55,14 +54,19 @@ class DefaultServiceDefinition<S> implements ServiceDefinition<S> {
 
     @Override
     public <X extends Throwable> S orElseThrow(Supplier<? extends X> exceptionSupplier) throws X {
-        return InstantiationUtils.instantiate(loadedClass.orElseThrow(exceptionSupplier));
+        final Class<S> type = loadedClass.orElseThrow(exceptionSupplier);
+        try {
+            return type.newInstance();
+        } catch (Throwable e) {
+            throw exceptionSupplier.get();
+        }
     }
 
     @Override
     public S load() {
         return loadedClass.map(aClass -> {
             try {
-                return InstantiationUtils.instantiate(aClass);
+                return aClass.newInstance();
             } catch (Throwable e) {
                 throw new ServiceConfigurationError("Error loading service [" + aClass.getName() + "]: " + e.getMessage(), e);
             }

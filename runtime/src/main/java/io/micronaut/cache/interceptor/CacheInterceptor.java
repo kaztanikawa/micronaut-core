@@ -50,6 +50,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.function.BiConsumer;
@@ -115,7 +116,7 @@ public class CacheInterceptor implements MethodInterceptor<Object, Object> {
         if (context.hasStereotype(CacheConfig.class)) {
             ReturnType returnTypeObject = context.getReturnType();
             Class returnType = returnTypeObject.getType();
-            if (CompletableFuture.class.isAssignableFrom(returnType)) {
+            if (CompletionStage.class.isAssignableFrom(returnType)) {
                 return interceptCompletableFuture(context, returnTypeObject, returnType);
             } else if (Publishers.isConvertibleToPublisher(returnType)) {
                 return interceptPublisher(context, returnTypeObject, returnType);
@@ -383,10 +384,6 @@ public class CacheInterceptor implements MethodInterceptor<Object, Object> {
                             CacheKeyGenerator keyGenerator = cacheOperation.getCacheInvalidateKeyGenerator(invalidateOperation);
                             String[] parameterNames = invalidateOperation.get(MEMBER_PARAMETERS, String[].class, StringUtils.EMPTY_STRING_ARRAY);
                             Object[] parameterValues = resolveParams(context, parameterNames);
-                            Class<? extends CacheKeyGenerator> alternateKeyGen = invalidateOperation.get(MEMBER_KEY_GENERATOR, Class.class).orElse(null);
-                            if (alternateKeyGen != null && keyGenerator.getClass() != alternateKeyGen) {
-                                keyGenerator = resolveKeyGenerator(alternateKeyGen);
-                            }
                             Object key = keyGenerator.generateKey(context, parameterValues);
                             for (String cacheName : cacheNames) {
                                 AsyncCache<?> asyncCache = cacheManager.getCache(cacheName).async();
@@ -412,13 +409,6 @@ public class CacheInterceptor implements MethodInterceptor<Object, Object> {
                                         emitter.onNext(true);
                                         emitter.onComplete();
                                     } else {
-                                        CacheKeyGenerator keyGenerator = cacheOperation.getCacheInvalidateKeyGenerator(invalidateOperation);
-                                        String[] parameterNames = invalidateOperation.get(MEMBER_PARAMETERS, String[].class, StringUtils.EMPTY_STRING_ARRAY);
-                                        Object[] parameterValues = resolveParams(context, parameterNames);
-                                        Class<? extends CacheKeyGenerator> alternateKeyGen = invalidateOperation.get(MEMBER_KEY_GENERATOR, Class.class).orElse(null);
-                                        if (alternateKeyGen != null && keyGenerator.getClass() != alternateKeyGen) {
-                                            keyGenerator = resolveKeyGenerator(alternateKeyGen);
-                                        }
                                         emitter.onNext(o);
                                         emitter.onComplete();
                                     }
@@ -427,10 +417,6 @@ public class CacheInterceptor implements MethodInterceptor<Object, Object> {
                                 CacheKeyGenerator keyGenerator = cacheOperation.getCacheInvalidateKeyGenerator(invalidateOperation);
                                 String[] parameterNames = invalidateOperation.get(MEMBER_PARAMETERS, String[].class, StringUtils.EMPTY_STRING_ARRAY);
                                 Object[] parameterValues = resolveParams(context, parameterNames);
-                                Class<? extends CacheKeyGenerator> alternateKeyGen = invalidateOperation.get(MEMBER_KEY_GENERATOR, Class.class).orElse(null);
-                                if (alternateKeyGen != null && keyGenerator.getClass() != alternateKeyGen) {
-                                    keyGenerator = resolveKeyGenerator(alternateKeyGen);
-                                }
                                 Object key = keyGenerator.generateKey(context, parameterValues);
                                 final CompletableFuture<Void> allFutures = buildInvalidateFutures(cacheNames, key);
                                 allFutures.whenCompleteAsync((aBoolean, throwable) -> {
@@ -679,11 +665,20 @@ public class CacheInterceptor implements MethodInterceptor<Object, Object> {
 
     private CacheKeyGenerator resolveKeyGenerator(CacheKeyGenerator defaultKeyGenerator, AnnotationValue<Cacheable> cacheConfig) {
         CacheKeyGenerator keyGenerator = defaultKeyGenerator;
-        Class<? extends CacheKeyGenerator> alternateKeyGen = cacheConfig.get(MEMBER_KEY_GENERATOR, Class.class).orElse(null);
-        if (alternateKeyGen != null && keyGenerator.getClass() != alternateKeyGen) {
-            keyGenerator = resolveKeyGenerator(alternateKeyGen);
+        final CacheKeyGenerator altKeyGenInstance = cacheConfig.get(MEMBER_KEY_GENERATOR, CacheKeyGenerator.class).orElse(null);
+        if (altKeyGenInstance != null) {
+            return altKeyGenInstance;
+        } else {
+            Class<? extends CacheKeyGenerator> alternateKeyGen = cacheConfig.get(MEMBER_KEY_GENERATOR, Class.class).orElse(null);
+            if (alternateKeyGen != null && keyGenerator.getClass() != alternateKeyGen) {
+                keyGenerator = resolveKeyGenerator(alternateKeyGen);
+            }
+            if (keyGenerator == null) {
+                return new DefaultCacheKeyGenerator();
+            }
+            return keyGenerator;
         }
-        return keyGenerator;
+
     }
 
     private String[] resolveCacheNames(AnnotationValue<CacheConfig> defaultConfig, AnnotationValue<Cacheable> cacheConfig) {
@@ -773,10 +768,6 @@ public class CacheInterceptor implements MethodInterceptor<Object, Object> {
         Object[] parameterValues = resolveParams(context, parameterNames);
 
         if (!invalidateAll) {
-            Class<? extends CacheKeyGenerator> alternateKeyGen = cacheConfig.get(MEMBER_KEY_GENERATOR, Class.class).orElse(null);
-            if (alternateKeyGen != null && keyGenerator.getClass() != alternateKeyGen) {
-                keyGenerator = resolveKeyGenerator(alternateKeyGen);
-            }
             key = keyGenerator.generateKey(context, parameterValues);
         }
 
@@ -896,11 +887,15 @@ public class CacheInterceptor implements MethodInterceptor<Object, Object> {
         }
 
         CacheKeyGenerator getCacheInvalidateKeyGenerator(AnnotationValue<CacheInvalidate> cacheConfig) {
-            return getKeyGenerator(cacheConfig.get(MEMBER_KEY_GENERATOR, Class.class).orElse(null));
+            return cacheConfig.get(MEMBER_KEY_GENERATOR, CacheKeyGenerator.class).orElseGet(() ->
+                getKeyGenerator(cacheConfig.get(MEMBER_KEY_GENERATOR, Class.class).orElse(null))
+            );
         }
 
         CacheKeyGenerator getCachePutKeyGenerator(AnnotationValue<CachePut> cacheConfig) {
-            return getKeyGenerator(cacheConfig.get(MEMBER_KEY_GENERATOR, Class.class).orElse(null));
+            return cacheConfig.get(MEMBER_KEY_GENERATOR, CacheKeyGenerator.class).orElseGet(() ->
+                getKeyGenerator(cacheConfig.get(MEMBER_KEY_GENERATOR, Class.class).orElse(null))
+            );
         }
 
         private String[] getCacheNames(String[] cacheNames) {

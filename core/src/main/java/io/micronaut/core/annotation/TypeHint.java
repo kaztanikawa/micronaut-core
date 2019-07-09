@@ -29,9 +29,55 @@ import java.lang.annotation.Target;
  */
 @Target({ElementType.ANNOTATION_TYPE, ElementType.TYPE})
 @Retention(RetentionPolicy.RUNTIME)
+@Experimental
 public @interface TypeHint {
     /**
      * @return The types to provide a hint
      */
-    Class[] value();
+    Class[] value() default {};
+
+    /**
+     * Describes the access.
+     * @return The access type
+     */
+    AccessType[] accessType() default AccessType.ALL_DECLARED_CONSTRUCTORS;
+
+    /**
+     * @return The type names
+     */
+    String[] typeNames() default {};
+
+    /**
+     * The access type.
+     */
+    enum AccessType {
+        /**
+         * All public members.
+         */
+        ALL_PUBLIC,
+        /**
+         * All declared constructors require access.
+         */
+        ALL_DECLARED_CONSTRUCTORS,
+        /**
+         * All public constructors require access.
+         */
+        ALL_PUBLIC_CONSTRUCTORS,
+        /**
+         * All declared methods require access.
+         */
+        ALL_DECLARED_METHODS,
+        /**
+         * All declared fields require access.
+         */
+        ALL_DECLARED_FIELDS,
+        /**
+         * All public methods require access.
+         */
+        ALL_PUBLIC_METHODS,
+        /**
+         * All public fields require access.
+         */
+        ALL_PUBLIC_FIELDS
+    }
 }

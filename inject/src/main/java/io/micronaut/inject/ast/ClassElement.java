@@ -16,9 +16,8 @@
 package io.micronaut.inject.ast;
 
 import io.micronaut.core.naming.NameUtils;
-
+import io.micronaut.core.util.ArgumentUtils;
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 import java.util.*;
 import java.util.function.Predicate;
 
@@ -40,6 +39,14 @@ public interface ClassElement extends TypedElement {
     boolean isAssignable(String type);
 
     /**
+     * Whether this element is an enum.
+     * @return True if it is an enum
+     */
+    default boolean isEnum() {
+        return this instanceof EnumElement;
+    }
+
+    /**
      * Find and return a single primary constructor. If more than constructor candidate exists, then return empty unless a
      * constructor is found that is annotated with either {@link io.micronaut.core.annotation.Creator} or {@link javax.inject.Inject}.
      *
@@ -58,7 +65,7 @@ public interface ClassElement extends TypedElement {
         return Optional.empty();
     }
 
-    @Nullable
+    @Nonnull
     @Override
     default ClassElement getType() {
         return this;
@@ -140,6 +147,28 @@ public interface ClassElement extends TypedElement {
      */
     default boolean isIterable() {
         return isArray() || isAssignable(Iterable.class);
+    }
+
+    /**
+     * Get the type arguments for the given type name.
+     *
+     * @param type The type to retrieve type arguments for
+     * @return The type arguments for this class element
+     * @since 1.1.1
+     */
+    default @Nonnull Map<String, ClassElement> getTypeArguments(@Nonnull String type) {
+        return Collections.emptyMap();
+    }
+
+    /**
+     * Get the type arguments for the given type name.
+     *
+     * @param type The type to retrieve type arguments for
+     * @return The type arguments for this class element
+     */
+    default @Nonnull Map<String, ClassElement> getTypeArguments(@Nonnull Class<?> type) {
+        ArgumentUtils.requireNonNull("type", type);
+        return getTypeArguments(type.getName());
     }
 
     /**

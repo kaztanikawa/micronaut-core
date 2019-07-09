@@ -16,10 +16,12 @@
 package io.micronaut.annotation.processing;
 
 import io.micronaut.annotation.processing.visitor.LoadedVisitor;
+import io.micronaut.aop.Introduction;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.core.annotation.AnnotationMetadata;
 import io.micronaut.core.io.service.ServiceDefinition;
 import io.micronaut.core.io.service.SoftServiceLoader;
+import io.micronaut.core.order.OrderUtil;
 import io.micronaut.core.util.StringUtils;
 import io.micronaut.core.version.VersionUtils;
 import io.micronaut.inject.processing.JavaModelUtils;
@@ -32,6 +34,7 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementScanner8;
 import java.util.*;
@@ -60,7 +63,7 @@ public class TypeElementVisitorProcessor extends AbstractInjectAnnotationProcess
 
 
         Collection<TypeElementVisitor> typeElementVisitors = findTypeElementVisitors();
-        Collection<LoadedVisitor> loadedVisitors = new ArrayList<>(typeElementVisitors.size());
+        List<LoadedVisitor> loadedVisitors = new ArrayList<>(typeElementVisitors.size());
         for (TypeElementVisitor visitor : typeElementVisitors) {
             try {
                 loadedVisitors.add(new LoadedVisitor(
@@ -74,6 +77,7 @@ public class TypeElementVisitorProcessor extends AbstractInjectAnnotationProcess
             }
 
         }
+        OrderUtil.reverseSort(loadedVisitors);
         for (LoadedVisitor loadedVisitor : loadedVisitors) {
             try {
                 loadedVisitor.getVisitor().start(javaVisitorContext);
@@ -172,7 +176,12 @@ public class TypeElementVisitorProcessor extends AbstractInjectAnnotationProcess
         public Object visitType(TypeElement classElement, Object o) {
             AnnotationMetadata typeAnnotationMetadata = annotationUtils.getAnnotationMetadata(classElement);
 
-            visitors.forEach(v -> v.visit(classElement, typeAnnotationMetadata));
+            for (LoadedVisitor visitor : visitors) {
+                final io.micronaut.inject.ast.Element resultingElement = visitor.visit(classElement, typeAnnotationMetadata);
+                if (resultingElement != null) {
+                    typeAnnotationMetadata = resultingElement.getAnnotationMetadata();
+                }
+            }
 
             Element enclosingElement = classElement.getEnclosingElement();
             // don't process inner class unless this is the visitor for it
@@ -180,12 +189,27 @@ public class TypeElementVisitorProcessor extends AbstractInjectAnnotationProcess
                     concreteClass.getQualifiedName().equals(classElement.getQualifiedName());
 
             if (shouldVisit) {
-                TypeElement superClass = modelUtils.superClassFor(classElement);
-                if (superClass != null && !modelUtils.isObjectClass(superClass)) {
-                    superClass.accept(this, o);
-                }
+                if (typeAnnotationMetadata.hasStereotype(Introduction.class)) {
+                    classElement.asType().accept(new PublicAbstractMethodVisitor<Object, Object>(classElement, modelUtils, elementUtils) {
+                        @Override
+                        protected void accept(DeclaredType type, Element element, Object o) {
+                            if (element instanceof ExecutableElement) {
+                                ElementVisitor.this.visitExecutable(
+                                        (ExecutableElement) element,
+                                        o
+                                );
+                            }
+                        }
+                    }, null);
+                    return null;
+                } else {
+                    TypeElement superClass = modelUtils.superClassFor(classElement);
+                    if (superClass != null && !modelUtils.isObjectClass(superClass)) {
+                        superClass.accept(this, o);
+                    }
 
-                return scan(classElement.getEnclosedElements(), o);
+                    return scan(classElement.getEnclosedElements(), o);
+                }
             } else {
                 return null;
             }
@@ -195,14 +219,23 @@ public class TypeElementVisitorProcessor extends AbstractInjectAnnotationProcess
         public Object visitExecutable(ExecutableElement executableElement, Object o) {
             AnnotationMetadata methodAnnotationMetadata = annotationUtils.getAnnotationMetadata(executableElement);
             if (executableElement.getSimpleName().toString().equals("<init>")) {
-                visitors.forEach(v -> v.visit(executableElement, methodAnnotationMetadata));
+                for (LoadedVisitor visitor : visitors) {
+                    final io.micronaut.inject.ast.Element resultingElement = visitor.visit(executableElement, methodAnnotationMetadata);
+                    if (resultingElement != null) {
+                        methodAnnotationMetadata = resultingElement.getAnnotationMetadata();
+                    }
+                }
                 return null;
             } else {
 
-
-                visitors.stream()
-                        .filter(v -> v.matches(methodAnnotationMetadata))
-                        .forEach(v -> v.visit(executableElement, methodAnnotationMetadata));
+                for (LoadedVisitor visitor : visitors) {
+                    if (visitor.matches(methodAnnotationMetadata)) {
+                        final io.micronaut.inject.ast.Element resultingElement = visitor.visit(executableElement, methodAnnotationMetadata);
+                        if (resultingElement != null) {
+                            methodAnnotationMetadata = resultingElement.getAnnotationMetadata();
+                        }
+                    }
+                }
             }
 
 
@@ -218,9 +251,14 @@ public class TypeElementVisitorProcessor extends AbstractInjectAnnotationProcess
 
             AnnotationMetadata fieldAnnotationMetadata = annotationUtils.getAnnotationMetadata(variable);
 
-            visitors.stream()
-                    .filter(v -> v.matches(fieldAnnotationMetadata))
-                    .forEach(v -> v.visit(variable, fieldAnnotationMetadata));
+            for (LoadedVisitor visitor : visitors) {
+                if (visitor.matches(fieldAnnotationMetadata)) {
+                    final io.micronaut.inject.ast.Element resultingElement = visitor.visit(variable, fieldAnnotationMetadata);
+                    if (resultingElement != null) {
+                        fieldAnnotationMetadata = resultingElement.getAnnotationMetadata();
+                    }
+                }
+            }
 
             return null;
         }

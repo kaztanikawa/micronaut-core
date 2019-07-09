@@ -17,13 +17,13 @@ package io.micronaut.retry.intercept;
 
 import io.micronaut.core.annotation.AnnotationMetadata;
 import io.micronaut.core.annotation.AnnotationValue;
-import io.micronaut.core.type.Argument;
 import io.micronaut.retry.RetryState;
 import io.micronaut.retry.RetryStateBuilder;
 import io.micronaut.retry.annotation.Retryable;
 
 import java.time.Duration;
-import java.util.Collections;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Set;
 
 /**
@@ -74,8 +74,9 @@ class AnnotationRetryStateBuilder implements RetryStateBuilder {
 
     @SuppressWarnings("unchecked")
     private Set<Class<? extends Throwable>> resolveIncludes(AnnotationValue<Retryable> retry, String includes) {
-        return retry
-            .get(includes, Argument.of(Set.class, Argument.of(Class.class, Throwable.class)))
-            .orElse(Collections.emptySet());
+        Class<?>[] values = retry.classValues(includes);
+        Set classes = new HashSet<>(values.length);
+        classes.addAll(Arrays.asList(values));
+        return classes;
     }
 }

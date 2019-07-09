@@ -29,6 +29,7 @@ import io.micronaut.inject.annotation.DefaultAnnotationMetadata;
 import io.micronaut.inject.ast.ClassElement;
 import io.micronaut.core.beans.AbstractBeanProperty;
 import io.micronaut.inject.ast.MethodElement;
+import io.micronaut.inject.ast.TypedElement;
 import io.micronaut.inject.writer.AbstractClassFileWriter;
 import io.micronaut.inject.writer.ClassWriterOutputVisitor;
 import org.objectweb.asm.ClassWriter;
@@ -61,15 +62,18 @@ class BeanPropertyWriter extends AbstractClassFileWriter implements Named {
     private final AnnotationMetadata annotationMetadata;
     private final Type type;
     private final ClassWriter classWriter;
-    private final Map<String, Object> typeArguments;
+    private final Map<String, ClassElement> typeArguments;
     private final Type beanType;
     private final boolean readOnly;
     private final MethodElement readMethod;
     private final MethodElement writeMethod;
+    private final HashMap<String, GeneratorAdapter> loadTypeMethods = new HashMap<>();
+    private final TypedElement typeElement;
 
     /**
      * Default constructor.
      * @param introspectionWriter The outer inspection writer.
+     * @param typeElement  The type element
      * @param propertyType The property type
      * @param propertyName The property name
      * @param readMethod The read method name
@@ -81,6 +85,7 @@ class BeanPropertyWriter extends AbstractClassFileWriter implements Named {
      */
     BeanPropertyWriter(
             @Nonnull BeanIntrospectionWriter introspectionWriter,
+            @Nonnull TypedElement typeElement,
             @Nonnull Type propertyType,
             @Nonnull String propertyName,
             @Nullable MethodElement readMethod,
@@ -90,6 +95,7 @@ class BeanPropertyWriter extends AbstractClassFileWriter implements Named {
             @Nullable Map<String, ClassElement> typeArguments) {
 
         Type introspectionType = introspectionWriter.getIntrospectionType();
+        this.typeElement = typeElement;
         this.beanType = introspectionWriter.getBeanType();
         this.propertyType = propertyType;
         this.readMethod = readMethod;
@@ -98,9 +104,9 @@ class BeanPropertyWriter extends AbstractClassFileWriter implements Named {
         this.readOnly = isReadOnly;
         this.annotationMetadata = annotationMetadata == AnnotationMetadata.EMPTY_METADATA ? null : annotationMetadata;
         this.type = getTypeReference(introspectionType.getClassName() + "$$" + index);
-        this.classWriter = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        this.classWriter = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
         if (CollectionUtils.isNotEmpty(typeArguments)) {
-            this.typeArguments = toTypeArguments(typeArguments);
+            this.typeArguments = typeArguments;
         } else {
             this.typeArguments = null;
         }
@@ -141,6 +147,13 @@ class BeanPropertyWriter extends AbstractClassFileWriter implements Named {
             // the write method
             writeWriteMethod();
 
+            if (annotationMetadata != null && annotationMetadata instanceof DefaultAnnotationMetadata) {
+                final DefaultAnnotationMetadata annotationMetadata = (DefaultAnnotationMetadata) this.annotationMetadata;
+                if (!annotationMetadata.isEmpty()) {
+                    AnnotationMetadataWriter.writeAnnotationDefaults(annotationMetadata, classWriter, type, loadTypeMethods);
+                }
+            }
+
             if (readOnly) {
                 // override isReadOnly method
                 final GeneratorAdapter isReadOnly = startPublicMethodZeroArgs(classWriter, boolean.class, "isReadOnly");
@@ -148,6 +161,11 @@ class BeanPropertyWriter extends AbstractClassFileWriter implements Named {
                 isReadOnly.returnValue();
                 isReadOnly.visitMaxs(1, 1);
                 isReadOnly.endMethod();
+            }
+
+            for (GeneratorAdapter generator : loadTypeMethods.values()) {
+                generator.visitMaxs(3, 1);
+                generator.visitEnd();
             }
             classOutput.write(classWriter.toByteArray());
         }
@@ -217,7 +235,7 @@ class BeanPropertyWriter extends AbstractClassFileWriter implements Named {
             if (annotationMetadata.isEmpty()) {
                 constructor.visitInsn(ACONST_NULL);
             } else {
-                AnnotationMetadataWriter.instantiateNewMetadata(type, classWriter, constructor, annotationMetadata, new HashMap<>());
+                AnnotationMetadataWriter.instantiateNewMetadata(type, classWriter, constructor, annotationMetadata, loadTypeMethods);
             }
         } else {
             constructor.visitInsn(ACONST_NULL);
@@ -225,14 +243,15 @@ class BeanPropertyWriter extends AbstractClassFileWriter implements Named {
 
         // 5th argument: The type arguments
         if (typeArguments != null) {
-            pushTypeArguments(constructor, typeArguments);
+            pushTypeArgumentElements(constructor, typeElement, typeArguments);
         } else {
             constructor.visitInsn(ACONST_NULL);
         }
 
         invokeConstructor(constructor, AbstractBeanProperty.class, BeanIntrospection.class, Class.class, String.class, AnnotationMetadata.class, Argument[].class);
         constructor.visitInsn(RETURN);
-        constructor.visitMaxs(1, 2);
+        constructor.visitMaxs(20, 2);
+
         constructor.visitEnd();
     }
 }

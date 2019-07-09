@@ -74,7 +74,6 @@ public class ObjectMapperFactory {
      * @param jsonFactory          The JSON factory
      * @return The {@link ObjectMapper}
      */
-    @Bean
     @Singleton
     @Primary
     @BootstrapContextCompatible
@@ -134,6 +133,11 @@ public class ObjectMapperFactory {
         objectMapper.configure(DeserializationFeature.UNWRAP_SINGLE_VALUE_ARRAYS, true);
 
         if (hasConfiguration) {
+
+            ObjectMapper.DefaultTyping defaultTyping = jacksonConfiguration.getDefaultTyping();
+            if (defaultTyping != null) {
+                objectMapper.enableDefaultTyping(defaultTyping);
+            }
 
             JsonInclude.Include include = jacksonConfiguration.getSerializationInclusion();
             if (include != null) {

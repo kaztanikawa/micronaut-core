@@ -15,6 +15,7 @@
  */
 package io.micronaut.upload
 
+
 import io.micronaut.AbstractMicronautSpec
 import io.micronaut.http.HttpRequest
 import io.micronaut.http.HttpResponse
@@ -55,6 +56,41 @@ class StreamUploadSpec extends AbstractMicronautSpec {
         file.length() == data.size()
     }
 
+    void "test upload on a validated controller"() {
+        given:
+        def data = '{"title":"Test"}'
+        MultipartBody requestBody = MultipartBody.builder()
+                .addPart("data", "data.json", MediaType.APPLICATION_JSON_TYPE, data.bytes)
+                .build()
+
+        when:
+        Flowable<HttpResponse<String>> flowable = Flowable.fromPublisher(client.exchange(
+                HttpRequest.POST("/upload/validated/receive-file-upload", requestBody)
+                        .contentType(MediaType.MULTIPART_FORM_DATA)
+                        .accept(MediaType.TEXT_PLAIN_TYPE), String
+        ))
+        HttpResponse<String> response = flowable.blockingFirst()
+
+        then:
+        response.code() == HttpStatus.OK.code
+    }
+
+    void "test releasing part datas late"() {
+        given:
+        MultipartBody requestBody = MultipartBody.builder()
+                .addPart("data", "data.pdf", new MediaType("application/pdf"), new byte[3000])
+                .build()
+
+        when:
+        HttpResponse response = client.toBlocking().exchange(
+                HttpRequest.POST("/upload/receive-flow-parts", requestBody)
+                        .contentType(MediaType.MULTIPART_FORM_DATA)
+                        .accept(MediaType.TEXT_PLAIN_TYPE), Boolean)
+
+        then:
+        response.code() == HttpStatus.OK.code
+    }
+
     void "test upload big FileUpload object via transferTo"() {
         given:
         def val = 'Big ' + 'xxxx' * 500
@@ -65,7 +101,6 @@ class StreamUploadSpec extends AbstractMicronautSpec {
                 .addPart("title", "bar")
                 .addPart("data", "data.json", MediaType.APPLICATION_JSON_TYPE, data.bytes)
                 .build()
-
 
         when:
         Flowable<HttpResponse<String>> flowable = Flowable.fromPublisher(client.exchange(

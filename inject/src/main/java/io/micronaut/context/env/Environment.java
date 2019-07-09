@@ -144,8 +144,14 @@ public interface Environment extends PropertyResolver, LifeCycle<Environment>, C
     String AZURE = "azure";
 
     /**
+     * Cloud provider Oracle Cloud.
+     */
+    String ORACLE_CLOUD = "oraclecloud";
+
+    /**
      * Cloud provider Digital Ocean.
      */
+
     String DIGITAL_OCEAN = "digitalocean";
     /**
      * Cloud or non cloud provider on bare metal (unknown).
@@ -211,6 +217,13 @@ public interface Environment extends PropertyResolver, LifeCycle<Environment>, C
      * @return This environment
      */
     Environment addPropertySource(PropertySource propertySource);
+
+    /**
+     * Removes a property source from this environment.
+     * @param propertySource The property source
+     * @return This environment
+     */
+    Environment removePropertySource(PropertySource propertySource);
 
     /**
      * Add an application package. Application packages are candidates for scanning for tools that need it (such as JPA

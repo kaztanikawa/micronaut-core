@@ -24,6 +24,7 @@ import io.micronaut.core.convert.value.MutableConvertibleValuesMap;
 import io.micronaut.core.io.scan.ClassPathAnnotationScanner;
 import io.micronaut.core.reflect.ClassUtils;
 import io.micronaut.core.util.ArgumentUtils;
+import io.micronaut.core.util.CollectionUtils;
 import io.micronaut.inject.ast.ClassElement;
 import io.micronaut.inject.ast.Element;
 import io.micronaut.inject.visitor.VisitorContext;
@@ -32,6 +33,7 @@ import io.micronaut.inject.writer.GeneratedFile;
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassHelper;
 import org.codehaus.groovy.ast.ClassNode;
+import org.codehaus.groovy.ast.ModuleNode;
 import org.codehaus.groovy.control.ErrorCollector;
 import org.codehaus.groovy.control.Janitor;
 import org.codehaus.groovy.control.SourceUnit;
@@ -46,6 +48,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.URL;
 import java.util.*;
 
 /**
@@ -70,24 +73,41 @@ public class GroovyVisitorContext implements VisitorContext {
         this.attributes = VISITOR_ATTRIBUTES;
     }
 
+    @Nonnull
+    @Override
+    public Iterable<URL> getClasspathResources(@Nonnull String path) {
+        try {
+            final Enumeration<URL> resources = sourceUnit.getClassLoader().getResources(path);
+            return CollectionUtils.enumerationToIterable(resources);
+        } catch (IOException e) {
+            return Collections.emptyList();
+        }
+    }
+
     @Override
     public Optional<ClassElement> getClassElement(String name) {
         if (name == null) {
             return Optional.empty();
         }
-        List<ClassNode> classes = sourceUnit.getAST().getClasses();
-        for (ClassNode aClass : classes) {
-            if (name.equals(aClass.getName())) {
-                return Optional.of(new GroovyClassElement(sourceUnit, aClass, AstAnnotationUtils.getAnnotationMetadata(sourceUnit, aClass)));
-            }
-        }
 
-        GroovyClassLoader classLoader = sourceUnit.getClassLoader();
-        if (classLoader != null) {
-            return ClassUtils.forName(name, classLoader).map(aClass -> {
-                ClassNode cn = ClassHelper.make(aClass);
-                return new GroovyClassElement(sourceUnit, cn, AstAnnotationUtils.getAnnotationMetadata(sourceUnit, cn));
-            });
+        if (sourceUnit != null) {
+            ModuleNode ast = sourceUnit.getAST();
+            if (ast != null) {
+                List<ClassNode> classes = ast.getClasses();
+                for (ClassNode aClass : classes) {
+                    if (name.equals(aClass.getName())) {
+                        return Optional.of(new GroovyClassElement(sourceUnit, aClass, AstAnnotationUtils.getAnnotationMetadata(sourceUnit, aClass)));
+                    }
+                }
+            }
+
+            GroovyClassLoader classLoader = sourceUnit.getClassLoader();
+            if (classLoader != null) {
+                return ClassUtils.forName(name, classLoader).map(aClass -> {
+                    ClassNode cn = ClassHelper.make(aClass);
+                    return new GroovyClassElement(sourceUnit, cn, AstAnnotationUtils.getAnnotationMetadata(sourceUnit, cn));
+                });
+            }
         }
         return Optional.empty();
     }

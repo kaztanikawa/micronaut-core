@@ -21,19 +21,23 @@ import io.micronaut.core.annotation.AnnotationUtil;
 import io.micronaut.core.annotation.Internal;
 import io.micronaut.core.convert.value.MutableConvertibleValues;
 import io.micronaut.core.convert.value.MutableConvertibleValuesMap;
+import io.micronaut.core.io.service.ServiceDefinition;
+import io.micronaut.core.io.service.SoftServiceLoader;
 import io.micronaut.core.util.clhm.ConcurrentLinkedHashMap;
+import io.micronaut.inject.annotation.AnnotatedElementValidator;
+import io.micronaut.inject.annotation.AbstractAnnotationMetadataBuilder;
 
+import javax.annotation.Nullable;
 import javax.annotation.processing.Filer;
 import javax.annotation.processing.Messager;
+import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import java.lang.annotation.Annotation;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Utility methods for annotations.
@@ -55,48 +59,82 @@ public class AnnotationUtils {
     private final ModelUtils modelUtils;
     private final Filer filer;
     private final MutableConvertibleValues<Object> visitorAttributes;
+    private final ProcessingEnvironment processingEnv;
+    private final AnnotatedElementValidator elementValidator;
+    private JavaAnnotationMetadataBuilder javaAnnotationMetadataBuilder;
+    private final GenericUtils genericUtils;
 
     /**
      * Default constructor.
      *
+     * @param processingEnv     The processing env
      * @param elementUtils      The elements
      * @param messager          The messager
      * @param types             The types
      * @param modelUtils        The model utils
+     * @param genericUtils      The generic utils
      * @param filer             The filer
      * @param visitorAttributes The visitor attributes
      */
     protected AnnotationUtils(
+            ProcessingEnvironment processingEnv,
             Elements elementUtils,
             Messager messager,
             Types types,
             ModelUtils modelUtils,
+            GenericUtils genericUtils,
             Filer filer,
             MutableConvertibleValues<Object> visitorAttributes) {
         this.elementUtils = elementUtils;
         this.messager = messager;
         this.types = types;
         this.modelUtils = modelUtils;
+        this.genericUtils = genericUtils;
         this.filer = filer;
         this.visitorAttributes = visitorAttributes;
+        this.processingEnv = processingEnv;
+        final SoftServiceLoader<AnnotatedElementValidator> validators = SoftServiceLoader.load(AnnotatedElementValidator.class);
+        final Iterator<ServiceDefinition<AnnotatedElementValidator>> i = validators.iterator();
+        AnnotatedElementValidator elementValidator = null;
+        while (i.hasNext()) {
+            final ServiceDefinition<AnnotatedElementValidator> validator = i.next();
+            if (validator.isPresent()) {
+                elementValidator = validator.load();
+                break;
+            }
+        }
+        this.javaAnnotationMetadataBuilder = newAnnotationBuilder();
+        this.elementValidator = elementValidator;
     }
 
     /**
      * Default constructor.
      *
+     * @param processingEnv     The processing env
      * @param elementUtils      The elements
      * @param messager          The messager
      * @param types             The types
      * @param modelUtils        The model utils
+     * @param genericUtils      The generic utils
      * @param filer             The filer
      */
     protected AnnotationUtils(
+            ProcessingEnvironment processingEnv,
             Elements elementUtils,
             Messager messager,
             Types types,
             ModelUtils modelUtils,
+            GenericUtils genericUtils,
             Filer filer) {
-        this(elementUtils, messager, types, modelUtils, filer, new MutableConvertibleValuesMap<>());
+        this(processingEnv, elementUtils, messager, types, modelUtils, genericUtils, filer, new MutableConvertibleValuesMap<>());
+    }
+
+    /**
+     * The {@link AnnotatedElementValidator} instance. Can be null.
+     * @return The validator instance
+     */
+    public @Nullable AnnotatedElementValidator getElementValidator() {
+        return elementValidator;
     }
 
     /**
@@ -160,6 +198,16 @@ public class AnnotationUtils {
     }
 
     /**
+     * Get the declared annotation metadata for the given element.
+     *
+     * @param element The element
+     * @return The {@link AnnotationMetadata}
+     */
+    public AnnotationMetadata getDeclaredAnnotationMetadata(Element element) {
+        return javaAnnotationMetadataBuilder.buildDeclared(element);
+    }
+
+    /**
      * Get the annotation metadata for the given element.
      *
      * @param parent  The parent
@@ -173,10 +221,14 @@ public class AnnotationUtils {
     /**
      * Check whether the method is annotated.
      *
+     * @param declaringType The declaring type
      * @param method The method
      * @return True if it is annotated with non internal annotations
      */
-    public boolean isAnnotated(ExecutableElement method) {
+    public boolean isAnnotated(String declaringType, ExecutableElement method) {
+        if (AbstractAnnotationMetadataBuilder.isMetadataMutated(declaringType, method)) {
+            return true;
+        }
         List<? extends AnnotationMirror> annotationMirrors = method.getAnnotationMirrors();
         for (AnnotationMirror annotationMirror : annotationMirrors) {
             String typeName = annotationMirror.getAnnotationType().toString();
@@ -197,9 +249,7 @@ public class AnnotationUtils {
                 elementUtils,
                 messager,
                 this,
-                types,
-                modelUtils,
-                filer
+                modelUtils
         );
     }
 
@@ -210,11 +260,13 @@ public class AnnotationUtils {
      */
     public JavaVisitorContext newVisitorContext() {
         return new JavaVisitorContext(
+                processingEnv,
                 messager,
                 elementUtils,
                 this,
                 types,
                 modelUtils,
+                genericUtils,
                 filer,
                 visitorAttributes
         );

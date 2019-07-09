@@ -45,7 +45,27 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Internal
 public class IntrospectedTypeElementVisitor implements TypeElementVisitor<Introspected, Object> {
 
+    /**
+     * The position of the visitor.
+     */
+    public static final int POSITION = -100;
+
+    private static final String JAVAX_VALIDATION_CONSTRAINT = "javax.validation.Constraint";
+    private static final AnnotationValue<Introspected.IndexedAnnotation> ANN_CONSTRAINT = AnnotationValue.builder(Introspected.IndexedAnnotation.class)
+            .member("annotation", new AnnotationClassValue<>(JAVAX_VALIDATION_CONSTRAINT))
+            .build();
+    private static final String JAVAX_VALIDATION_VALID = "javax.validation.Valid";
+    private static final AnnotationValue<Introspected.IndexedAnnotation> ANN_VALID = AnnotationValue.builder(Introspected.IndexedAnnotation.class)
+            .member("annotation", new AnnotationClassValue<>(JAVAX_VALIDATION_VALID))
+            .build();
+
     private Map<String, BeanIntrospectionWriter> writers = new LinkedHashMap<>(10);
+
+    @Override
+    public int getOrder() {
+        // lower precedence, all others to mutate metadata as necessary
+        return POSITION;
+    }
 
     @Override
     public void visitClass(ClassElement element, VisitorContext context) {
@@ -60,7 +80,24 @@ public class IntrospectedTypeElementVisitor implements TypeElementVisitor<Intros
             final Set<String> excludes = CollectionUtils.setOf(introspected.get("excludes", String[].class, StringUtils.EMPTY_STRING_ARRAY));
             final Set<String> excludedAnnotations = CollectionUtils.setOf(introspected.get("excludedAnnotations", String[].class, StringUtils.EMPTY_STRING_ARRAY));
             final Set<String> includedAnnotations = CollectionUtils.setOf(introspected.get("includedAnnotations", String[].class, StringUtils.EMPTY_STRING_ARRAY));
-            final Set<AnnotationValue> indexedAnnotations = CollectionUtils.setOf(introspected.get("indexed", AnnotationValue[].class, new AnnotationValue[0]));
+            final Set<AnnotationValue> indexedAnnotations;
+
+            final Set<AnnotationValue> toIndex = CollectionUtils.setOf(introspected.get("indexed", AnnotationValue[].class, new AnnotationValue[0]));
+
+            if (CollectionUtils.isEmpty(toIndex)) {
+                indexedAnnotations = CollectionUtils.setOf(
+                        ANN_CONSTRAINT,
+                        ANN_VALID
+                );
+            } else {
+                toIndex.addAll(
+                    CollectionUtils.setOf(
+                            ANN_CONSTRAINT,
+                            ANN_VALID
+                    )
+                );
+                indexedAnnotations = toIndex;
+            }
 
             if (ArrayUtils.isNotEmpty(classes)) {
                 AtomicInteger index = new AtomicInteger(0);

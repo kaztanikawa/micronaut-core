@@ -20,8 +20,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.PropertyNamingStrategy;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import io.micronaut.core.annotation.Introspected;
+import io.micronaut.core.annotation.ReflectiveAccess;
 import io.micronaut.core.util.StringUtils;
 
+import javax.annotation.Nullable;
 import java.util.Locale;
 
 /**
@@ -42,7 +44,7 @@ public class CheckEntry implements Check {
      * @param id The id
      */
     @JsonCreator
-    protected CheckEntry(@JsonProperty("CheckID") String id) {
+    protected CheckEntry(@Nullable @JsonProperty("CheckID") String id) {
         this.id = id;
     }
 
@@ -54,6 +56,7 @@ public class CheckEntry implements Check {
     /**
      * @param name The name of the check
      */
+    @ReflectiveAccess
     protected void setName(String name) {
         this.name = name;
     }
@@ -71,6 +74,7 @@ public class CheckEntry implements Check {
     /**
      * @param notes The human readable notes
      */
+    @ReflectiveAccess
     protected void setNotes(String notes) {
         this.notes = notes;
     }
@@ -85,6 +89,7 @@ public class CheckEntry implements Check {
     /**
      * @param status The status
      */
+    @ReflectiveAccess
     protected void setStatus(String status) {
         this.status = status;
     }
